@@ -39,9 +39,8 @@ returns the chosen dictionary (loaded on first use, then cached); the API (M5) w
 
 **Dictionary caveat.** The WWF dictionary is proprietary, so no list matches it exactly.
 `words.txt` is the default because it covers words seen in real games that ENABLE1 lacks (DA,
-NESH, SHEN, GI, ROSA, JE), but it still misses some (DUH), and it can accept words WWF rejects
-(ENABLE1 has no `QI` or `ZA`, for
-example). Any newline-separated word list can be swapped in.
+NESH, SHEN, GI, ROSA, JE), but it still misses some (DUH) and may accept words WWF rejects.
+Any newline-separated word list can be swapped in.
 
 ## Milestone notes
 
