@@ -152,7 +152,7 @@ game**, and fixing the board on the game page *is* the label.
 - Each picture is kept with its game (`data/games/<id>/`), along with what the reader said about
   it and where it found the board.
 - When you **confirm** a turn that came from a picture, the confirmed board and rack become that
-  picture's label. Pictures behind turns you typed, or suggestions you played, are not used,
+  picture's label (the latest picture of that turn; earlier ones are kept but not used). Pictures behind turns you typed, or suggestions you played, are not used,
   because their board may include tiles the picture doesn't show.
 - The reader is **re-trained in the background after each such turn**, from those pictures plus
   the older pictures in `assets/archive/` (labelled before games kept their own pictures; they
@@ -178,11 +178,15 @@ How it works:
    squares are covered.
 3. **Empty or tile.** Every square is measured **relative to this picture's own colours**: how far
    it is from the picture's empty-cream colour (or from what its bonus kind looks like here), and
-   how strongly a letter-shaped stroke stands out from its own background. A small model learned
-   from your labelled pictures turns that into a probability. Because it is relative, a warm
+   how strongly a letter-shaped stroke stands out from its own background, and how dark its
+   darkest ink is (a tile's letter is dark, while an empty bonus square's "DL" or "TW" label is
+   white). A small model learned from your labelled pictures turns that into a probability. Because it is relative, a warm
    lamp, glare and vignetting don't turn empty squares into tiles.
-4. **Letters.** Each letter is cut out, whether dark or white (the last move's tiles have white
-   letters), and matched against letters cut from your labelled photos plus letters drawn from
+4. **Letters.** Each square's crop is first moved so its letter is in the middle (the grid is
+   rarely exact to better than a fraction of a square, and a letter cut off at the edge reads as
+   another: an L without its foot is an I). The letter is then cut out, whether dark or white (the
+   last move's tiles have white letters), without the small point value in the tile's corner, and
+   matched against letters cut from your labelled photos plus letters drawn from
    system fonts so every letter has examples.
 5. **Rack.** The seven slots below the board are read the same way. A tile with no letter is a
    blank (`?`). If the rack is partly outside the picture it isn't read, and your rack is left
@@ -222,8 +226,8 @@ On pictures held out of training, each game position in turn (`python -m wwf.vis
 
 | Test | Result |
 | --- | --- |
-| First picture of a game: squares read right | 99.0% (58 errors in 26 pictures: 14 tiles invented, 29 missed) |
-| Next turn, a few tiles removed from the board on file | 6 errors over 20 pictures; none refused wrongly |
+| First picture of a game: squares read right | 99.4% (46 errors in 34 pictures: 14 tiles invented, 9 missed, 23 wrong letters) |
+| Next turn, a few tiles removed from the board on file | 6 errors over 27 pictures; none refused wrongly |
 | Empty board under a heavy orange lamp | 0 tiles (it used to read 168) |
 | Picture of a different game | refused every time |
 
@@ -236,6 +240,10 @@ Limits for now:
   board tiles.
 - Look-alike letters (F/E, P/R, O/Q, C/G, I/L) are the usual mistakes, and get rarer as you label
   more pictures.
+- Squares are scored against your confirmed boards, so a wrong label counts as a reader error.
+  Squares a picture strongly contradicts are left out of training and scoring (`--check` lists
+  them): fix those labels and retrain. Only the latest picture of a turn becomes a label, because
+  an earlier one may show the board before some of the confirmed tiles were played.
 - The board is found from its coloured bonus squares. If glare or a hand hides most of them, or
   the picture is tinted so heavily that colours cannot be told apart, it says it couldn't find
   the board rather than guessing.
