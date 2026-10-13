@@ -289,6 +289,55 @@
   }
 
 
+
+  // --- previews drawn on the board -----------------------------------------------------------
+  // A previewed word or suggestion is shown on the board squares without being part of the
+  // form: previewed tiles are disabled, so the board form never submits them, and clear() puts
+  // every square back exactly as it was.
+  function boardOverlay() {
+    const board = document.querySelector("#board-form .board");
+    let touched = [];
+    const cellAt = (r, c) => board && board.querySelector(`input.cell[data-r="${r}"][data-c="${c}"]`);
+    // anything the server drew (no JavaScript) is taken off first, so clear() can undo it
+    if (board) {
+      board.querySelectorAll("input.cell.proposed:disabled").forEach((el) => {
+        el.value = ""; el.disabled = false; el.classList.remove("proposed", "blank");
+      });
+      board.querySelectorAll(".cell.crossing").forEach((el) => el.classList.remove("crossing"));
+    }
+    function remember(el) {
+      if (!touched.some((t) => t.el === el)) touched.push({ el, value: el.value, wasDisabled: el.disabled });
+    }
+    function clear() {
+      touched.forEach(({ el, value, wasDisabled }) => {
+        el.value = value; el.disabled = wasDisabled;
+        el.classList.remove("proposed", "crossing", "start-marker");
+        if (!value) el.classList.remove("blank");
+      });
+      touched = [];
+    }
+    function show(cells, start) {
+      clear();
+      cells.forEach((c) => {
+        const el = cellAt(c.r, c.c);
+        if (!el) return;
+        remember(el);
+        if (c.new) {
+          el.value = c.letter; el.disabled = true;
+          el.classList.add("proposed");
+          el.classList.toggle("blank", !!c.blank);
+        } else {
+          el.classList.add("crossing");
+        }
+      });
+      if (start) {
+        const el = cellAt(start[0] - 1, start[1] - 1);
+        if (el) { remember(el); el.classList.add("start-marker"); }
+      }
+    }
+    return { show, clear };
+  }
+
   // --- game page: the move composer ----------------------------------------------------------
   // Types a word, chooses where it starts and which way, and draws it on the board with its score
   // before anything is recorded. The preview only changes what the squares show: previewed tiles
@@ -304,46 +353,10 @@
     const status = document.getElementById("composer-status");
     const force = document.getElementById("composer-force");
     const letters = document.getElementById("blank-letters");
-    const board = document.querySelector("#board-form .board");
-    const cellAt = (r, c) => board && board.querySelector(`input.cell[data-r="${r}"][data-c="${c}"]`);
-    let touched = [];  // squares the preview has changed, with what they held
+    const overlay = boardOverlay();
+    const clearOverlay = overlay.clear;
+    const show = overlay.show;
     let timer = null, seq = 0;
-    // A word previewed by the server (no JavaScript) is already drawn; start from the plain board
-    // and let the live preview draw it again, so Clear can take it off.
-    if (board) {
-      board.querySelectorAll("input.cell.proposed:disabled").forEach((el) => {
-        el.value = ""; el.disabled = false; el.classList.remove("proposed", "blank");
-      });
-      board.querySelectorAll(".cell.crossing").forEach((el) => el.classList.remove("crossing"));
-    }
-
-    function clearOverlay() {
-      touched.forEach(({ el, value, wasDisabled }) => {
-        el.value = value; el.disabled = wasDisabled;
-        el.classList.remove("proposed", "crossing", "start-marker");
-        if (!value) el.classList.remove("blank");
-      });
-      touched = [];
-    }
-    function show(cells, start) {
-      clearOverlay();
-      cells.forEach((c) => {
-        const el = cellAt(c.r, c.c);
-        if (!el) return;
-        touched.push({ el, value: el.value, wasDisabled: el.disabled });
-        if (c.new) {
-          el.value = c.letter; el.disabled = true;
-          el.classList.add("proposed");
-          el.classList.toggle("blank", !!c.blank);
-        } else {
-          el.classList.add("crossing");
-        }
-      });
-      if (start) {
-        const el = cellAt(start[0] - 1, start[1] - 1);
-        if (el) { el.classList.add("start-marker"); if (!touched.some((t) => t.el === el)) touched.push({ el, value: el.value, wasDisabled: el.disabled }); }
-      }
-    }
     function say(html) { status.innerHTML = html; }
     const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
 
@@ -428,6 +441,54 @@
     if (word.value && row.value && col.value) refresh();
   }
 
+
+  // --- game page: choosing a suggestion ------------------------------------------------------
+  // Choosing a move draws it on the board and updates the details beside it. Only Record this move
+  // changes the game; without JavaScript the same choice is a link that reloads the page.
+  function initSuggestions() {
+    const panel = document.getElementById("suggestions");
+    const data = document.getElementById("suggestions-data");
+    if (!panel || !data) return;
+    let moves;
+    try { moves = JSON.parse(data.textContent); } catch (e) { return; }
+    if (!moves.length) return;
+    const overlay = boardOverlay();
+    const game = panel.dataset.game;
+    const rows = Array.from(panel.querySelectorAll("tbody tr[data-n]"));
+    const text = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+    function choose(n) {
+      const m = moves[n];
+      if (!m) return;
+      overlay.show(m.cells, null);
+      rows.forEach((tr) => {
+        const on = +tr.dataset.n === n;
+        tr.classList.toggle("selected", on);
+        const a = tr.querySelector("a");
+        if (a) { if (on) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current"); }
+      });
+      text("sel-word", m.word); text("sel-score", m.score);
+      const words = m.words.map((w) => `${w.word} ${w.points}`).join(" + ") + (m.bingo ? ` + bingo ${m.bingo}` : "");
+      text("sel-detail", `${m.direction === "across" ? "Across" : "Down"} from row ${m.start[0]}, column ${m.start[1]} · ${words} · Tiles left on your rack: ${m.leave || "none"}`);
+      document.getElementById("record-form").action = `/game/${game}/record/${n}`;
+      text("sel-note", `Previewing ${m.word} for ${m.score} points, shown dashed on the board. Not recorded yet.`);
+      history.replaceState(null, "", `?do=find&move=${n}`);
+    }
+    rows.forEach((tr) => {
+      const n = +tr.dataset.n;
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", (e) => { e.preventDefault(); choose(n); });
+    });
+    const more = document.getElementById("show-more");
+    if (more) more.addEventListener("click", (e) => {
+      e.preventDefault();
+      rows.forEach((tr) => { tr.hidden = false; tr.classList.remove("more"); });
+      more.parentElement.hidden = true;
+    });
+    const picked = rows.find((tr) => tr.classList.contains("selected"));
+    choose(picked ? +picked.dataset.n : 0);
+  }
+
   // --- results page --------------------------------------------------------------------------
   function initResults() {
     const table = document.querySelector("table.moves");
@@ -481,6 +542,7 @@
     initUpload();
     initReview();
     initComposer();
+    initSuggestions();
     initResults();
     initOptions();
   });

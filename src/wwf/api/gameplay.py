@@ -153,8 +153,8 @@ def apply_edit(game: Game, board: BoardGrid, rack: str) -> int:
             else:
                 out.append(ch)
         merged.append(out)
-    if merged != game.board:
-        game.last_result = None
+    if merged != game.board or rack != game.rack:
+        game.last_result = None  # suggestions were for the old board and rack
     game.board = merged
     game.rack = rack
     _track_source(game, "grid")
@@ -297,6 +297,26 @@ def record_typed_move(
         return confirm_turn(svc, game, player, force=force)
     except Exception:
         game.board, game.rack, game.last_result, game.recognition = kept
+        _track_source(game, "grid")
+        raise
+
+
+def record_solver_move(
+    svc: Services, game: Game, n: int, *, expected_turn: int | None = None
+) -> Turn:
+    """Put suggestion `n` on the board and confirm it as your move, as one step.
+
+    Either the whole move is recorded, as exactly one turn, or the game is left untouched.
+    `expected_turn` is the turn number the page was showing."""
+    if expected_turn is not None and expected_turn != game.turn_number:
+        raise MoveRejected(["game_moved_on"])
+    kept = (game.board, game.rack, game.last_result, game.recognition)
+    try:
+        apply_solver_move(game, n)
+        return confirm_turn(svc, game, "me")
+    except Exception:
+        game.board, game.rack, game.last_result, game.recognition = kept
+        game.open_source, game.open_player = "", None
         _track_source(game, "grid")
         raise
 

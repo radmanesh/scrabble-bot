@@ -112,6 +112,34 @@ def _preview_payload(
     }
 
 
+SHOWN_AT_FIRST = 5
+
+
+def _suggestions_view(game: Game, selected: int) -> list[dict[str, Any]]:
+    """The solver's moves as the page needs them: the tiles each one would put on the board, so
+    choosing one can draw it without another request."""
+    result = game.last_result
+    if result is None:
+        return []
+    out = []
+    for n, m in enumerate(result.moves):
+        dr, dc = (0, 1) if m.direction == "across" else (1, 0)
+        new = {(p.row, p.col) for p in m.placements}
+        cells = []
+        for i in range(len(m.word)):
+            r, c = m.start[0] + i * dr, m.start[1] + i * dc
+            v = m.board_after[r][c] or ""
+            cells.append({"r": r, "c": c, "letter": v.upper(), "blank": v.islower(),
+                          "new": (r, c) in new, "conflict": False})  # fmt: skip
+        out.append({
+            "n": n, "word": m.word, "score": m.score.total, "direction": m.direction,
+            "start": [m.start[0] + 1, m.start[1] + 1], "leave": m.leave,
+            "words": [{"word": w.word, "points": w.points} for w in m.score.words],
+            "bingo": m.score.bingo_bonus, "tiles": len(m.placements), "cells": cells,
+        })  # fmt: skip
+    return out
+
+
 def _solve_error(e: ApiError) -> str:
     if e.error == "solve_timeout":
         return "The solver took longer than 10 seconds. Try fewer blanks or another solver."
@@ -166,6 +194,12 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
     ctx.setdefault("force_offer", False)
     ctx.setdefault("composer_preview", None)
     ctx.setdefault("do_action", _action_for(request, game))
+    suggestions = _suggestions_view(game, selected) if result else []
+    ctx.setdefault("suggestions", suggestions)
+    ctx.setdefault("show_all", request.query_params.get("all") == "1")
+    ctx.setdefault("first_n", SHOWN_AT_FIRST)
+    if ctx["do_action"] == "find" and suggestions and ctx["composer_preview"] is None:
+        ctx["composer_preview"] = {"cells": suggestions[selected]["cells"]}  # drawn on the board
     latest = game.latest_picture
     pictures = list(reversed(game.pictures[-RECENT_PICTURES:]))
     return _render(
@@ -339,6 +373,26 @@ def play(request: Request, game_id: str, n: int) -> Response:
     except ApiError:
         return _page(
             request, game, 422, errors=["That move isn't available any more: solve again."]
+        )
+    return _finish(request, game)
+
+
+@router.post("/game/{game_id}/record/{n}")
+def record_suggestion(request: Request, game_id: str, n: int, turn: str = Form("")) -> Response:
+    """Record a suggestion as your move: put it on the board and confirm it, as one step."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    svc = get_services(request)
+    try:
+        gameplay.record_solver_move(
+            svc, game, n, expected_turn=int(turn) if turn.isdigit() else None
+        )
+    except MoveRejected as e:
+        return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
+    except ApiError:
+        return _page(
+            request, game, 422, errors=["That move isn't available any more: find moves again."]
         )
     return _finish(request, game)
 

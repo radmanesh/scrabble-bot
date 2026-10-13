@@ -70,8 +70,11 @@ def test_solve_shows_ranked_moves(client: TestClient) -> None:
     assert r.status_code == 303 and r.headers["location"] == f"/game/{gid}"
     html = client.get(f"/game/{gid}").text
     assert "Smart brute force" in html
-    assert html.count("<tr") == 26  # header + 25 moves
-    assert re.search(r'class="cell[^"]* new', html)
+    assert html.count("<tr") == 26  # header + 25 moves (the later ones start folded away)
+    # the best move is drawn on the one board, dashed, not on a second board
+    assert re.search(r'class="cell[^"]* proposed', html) and 'class="board preview"' not in html
+    assert "Record this move" in html and "Tiles left on your rack" in html
+    assert "Play " not in html and "Leave" not in html
     preview = client.get(f"/game/{gid}/preview/3").text
     assert "<h2>" in preview and "board preview" in preview
 
@@ -340,3 +343,76 @@ def test_a_stale_page_cannot_record(client: TestClient, services: Services) -> N
               "player": "opponent", "turn": "7"},
     )  # fmt: skip
     assert r.status_code == 422 and len(services.game(gid).turns) == 1
+
+
+# --- solver results ---------------------------------------------------------------------------
+
+
+def _solved(client: TestClient) -> str:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "start_me"))
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "solve"))
+    return gid
+
+
+def test_results_start_compact_and_show_more_reveals_the_rest(client: TestClient) -> None:
+    gid = _solved(client)
+    html = client.get(f"/game/{gid}").text
+    assert html.count("<tr data-n=") == 25
+    assert 'id="show-more"' in html and "Show 20 more" in html
+    folded = len(re.findall(r'<tr data-n="\d+" class="[^"]*more"\s+hidden>', html))
+    assert folded == 20  # five are in view
+    everything = client.get(f"/game/{gid}?do=find&all=1").text
+    assert not re.search(r'more"\s+hidden', everything) and 'id="show-more"' not in everything
+
+
+def test_choosing_a_suggestion_only_previews_it(client: TestClient, services: Services) -> None:
+    gid = _solved(client)
+    game = services.game(gid)
+    board, turns = game.board, len(game.turns)
+    page = client.get(f"/game/{gid}?do=find&move=2").text
+    assert 'class="selected"' in page and 'aria-current="true"' in page
+    again = services.game(gid)
+    assert again.board == board and len(again.turns) == turns and again.last_result is not None
+
+
+def test_one_pass_action_in_the_results_and_none_when_typing(client: TestClient) -> None:
+    gid = _solved(client)
+    find = client.get(f"/game/{gid}").text
+    assert find.count('action="/game/' + gid + '/pass"') == 1 and "Play" not in find
+    mine = client.get(f"/game/{gid}?do=mine").text
+    assert "Record this move" not in mine and "suggestions-data" not in mine
+
+
+def test_recording_a_suggestion_confirms_one_turn_and_repeats_do_nothing(
+    client: TestClient, services: Services
+) -> None:
+    gid = _solved(client)
+    best = services.game(gid).last_result.moves[0]  # type: ignore[union-attr]
+    r = client.post(f"/game/{gid}/record/0", data={"turn": "2"}, follow_redirects=False)
+    assert r.status_code == 303
+    game = services.game(gid)
+    assert len(game.turns) == 2 and game.turns[-1].word == best.word
+    assert game.turns[-1].player == "me" and game.turns[-1].points == best.score.total
+    assert game.phase == "opponent_turn" and game.last_result is None
+    again = client.post(f"/game/{gid}/record/0", data={"turn": "2"})
+    assert again.status_code == 422 and len(services.game(gid).turns) == 2
+
+
+def test_changing_the_rack_or_board_drops_stale_suggestions(
+    client: TestClient, services: Services
+) -> None:
+    gid = _solved(client)
+    assert services.game(gid).last_result is not None
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIREX", "save"))
+    assert services.game(gid).last_result is None
+    assert "Find my best move" in client.get(f"/game/{gid}").text
+
+
+def test_no_legal_moves_explains_and_offers_pass(client: TestClient, services: Services) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "ZZZ", "start_me"))
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "ZZZ", "solve"))
+    html = client.get(f"/game/{gid}").text
+    if services.game(gid).last_result and not services.game(gid).last_result.moves:
+        assert "No legal moves with this rack" in html and "I pass this turn" in html

@@ -308,11 +308,27 @@ input.cell.proposed:disabled:placeholder-shown { background: var(--card); }
 .guide-rows { grid-column: 1; grid-row: 2; display: grid; grid-template-rows: repeat(15, minmax(0, 1fr)); gap: 2px; padding: 2px 0; }
 .guide-cols span, .guide-rows span { display: flex; align-items: center; justify-content: center; font-size: 0.62rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* composing: the board and the move form beside each other, so the preview and the form are both
-   in view. Stacked on phones, with the form right under the board. */
-.workspace.composing { display: grid; gap: 0 16px; grid-template-columns: minmax(0, 1fr); }
+/* the workspace: action bar, board and the panel for the chosen action. On a phone they stack in
+   that order, so the panel sits right under the board; on wide screens the board is on the left
+   and the bar and panel are on the right. */
+.workspace { display: grid; gap: 0 16px; grid-template-columns: minmax(0, 1fr); }
+.workspace.has-panel .ws-bar { order: 0; }
 @media (min-width: 900px) {
-  .workspace.composing { grid-template-columns: minmax(0, 620px) minmax(0, 1fr); align-items: start; }
-  .workspace.composing .ws-panel { position: sticky; top: 64px; }
-  .workspace.composing .board-card { max-width: none; }
+  .workspace.has-panel { grid-template-columns: minmax(0, 620px) minmax(0, 1fr); grid-template-areas: "board bar" "board panel"; align-items: start; }
+  .workspace.has-panel .ws-board { grid-area: board; }
+  .workspace.has-panel .ws-bar { grid-area: bar; }
+  .workspace.has-panel .ws-panel { grid-area: panel; }
+  .workspace.has-panel .board-card { max-width: none; }
 }
+
+/* suggestions */
+.suggestions h2 { margin-top: 0; }
+.selected-move { border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.selected-move h3 { margin: 4px 0; font-size: 1.3rem; }
+.selected-move .small { margin: 0 0 8px; }
+.preview-label { margin: 0; font-size: 0.85rem; }
+.suggestions table.moves { width: 100%; }
+.suggestions .moves td a { padding: 6px 0; min-height: 44px; display: flex; align-items: center; }
+.moves tr.selected a { text-decoration: underline; }
+.suggestions .moves th { font-size: 0.8rem; color: var(--muted); }
+.run-details { margin-top: 10px; }

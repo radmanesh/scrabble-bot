@@ -1,53 +1,78 @@
+{# The solver's moves. Choosing one only previews it on the board; Record this move is the one
+   action that changes the game. `suggestions` carries the tiles of every move so the page can
+   draw a choice without another request (app.js); the links work without JavaScript. #}
 {% if result %}
-<section class="card run-info">
+<section class="card suggestions" id="suggestions" data-game="{{ game.id }}" data-turn="{{ game.turn_number }}">
   <h2>Best moves</h2>
-  <p class="small">
-    <b>{{ solver_name }}</b> · {{ result.elapsed_ms }} ms · {{ result.dictionary_id }} · rack
-    <span class="kbd">{{ game.rack or "—" }}</span>
-    · <a href="/options?game={{ game.id }}">Options</a>
-  </p>
-  <details class="small">
-    <summary>Parameters and stats</summary>
+  {% if not suggestions %}
+  <p class="notice" role="status">No legal moves with this rack. Check the rack on the board, or
+    pass this turn.</p>
+  <form action="/game/{{ game.id }}/pass" method="post" class="actions">
+    <input type="hidden" name="who" value="me">
+    <button type="submit">I pass this turn</button>
+  </form>
+  {% else %}
+  {% set cur = suggestions[selected] %}
+  {% set everything = show_all or selected >= first_n or suggestions | length <= first_n %}
+  <div class="selected-move" id="selected-move">
+    <p class="preview-label"><span class="lg proposed">Preview</span>
+      <span id="sel-note">Shown dashed on the board. Not recorded yet.</span></p>
+    <h3><span id="sel-word">{{ cur.word }}</span> <span class="score" id="sel-score">{{ cur.score }}</span></h3>
+    <p class="small" id="sel-detail">
+      {{ "Across" if cur.direction == "across" else "Down" }} from row {{ cur.start[0] }}, column {{ cur.start[1] }}
+      · {% for w in cur.words %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}{% if cur.bingo %} + bingo {{ cur.bingo }}{% endif %}
+      · Tiles left on your rack: <span class="kbd">{{ cur.leave or "none" }}</span>
+    </p>
+    <form action="/game/{{ game.id }}/record/{{ cur.n }}" method="post" id="record-form">
+      <input type="hidden" name="turn" value="{{ game.turn_number }}">
+      <button type="submit" class="primary big" id="record-button">Record this move</button>
+    </form>
+  </div>
+
+  <table class="moves" aria-label="Suggested moves, best first">
+    <thead><tr><th>#</th><th>Word</th><th>Score</th><th>Start</th><th>Dir</th><th>Tiles left on your rack</th></tr></thead>
+    <tbody id="moves-body">
+    {% for m in suggestions %}
+    <tr data-n="{{ m.n }}" class="{% if m.n == selected %}selected{% endif %}{% if not everything and m.n >= first_n %} more{% endif %}"
+        {% if not everything and m.n >= first_n %}hidden{% endif %}>
+      <td>{{ loop.index }}</td>
+      <td><a href="?do=find&amp;move={{ m.n }}{% if show_all %}&amp;all=1{% endif %}"
+             {% if m.n == selected %}aria-current="true"{% endif %}>{{ m.word }}<span class="sr-only"> for {{ m.score }} points, preview on the board</span></a></td>
+      <td class="num">{{ m.score }}</td>
+      <td>{{ m.start[0] }},{{ m.start[1] }}</td>
+      <td><span aria-hidden="true">{{ "→" if m.direction == "across" else "↓" }}</span><span class="sr-only">{{ m.direction }}</span></td>
+      <td class="mono">{{ m.leave or "—" }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if not everything %}
+  <p class="actions"><a class="button" id="show-more" href="?do=find&amp;move={{ selected }}&amp;all=1">Show {{ suggestions | length - first_n }} more</a></p>
+  {% endif %}
+
+  <form action="/game/{{ game.id }}/pass" method="post" class="actions small-actions">
+    <input type="hidden" name="who" value="me">
+    <button type="submit" class="link">I pass this turn instead</button>
+  </form>
+  <script type="application/json" id="suggestions-data">{{ suggestions | tojson }}</script>
+  {% endif %}
+
+  <details class="small run-details">
+    <summary>How these were found</summary>
+    <p class="small"><b>{{ solver_name }}</b> · {{ result.elapsed_ms }} ms · {{ result.dictionary_id }}
+      · rack <span class="kbd">{{ game.rack or "—" }}</span> · <a href="/options?game={{ game.id }}">Change settings</a></p>
     <dl class="kv">
       {% for k, v in result.params.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}
       {% for k, v in result.stats.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}
     </dl>
   </details>
 </section>
-
-{% if not result.moves %}
-<p class="notice">No legal moves with this rack. You could <b>pass</b> or swap tiles on the phone.</p>
-<form action="/game/{{ game.id }}/pass" method="post" class="actions">
-  <input type="hidden" name="who" value="me">
-  <button type="submit">I passed</button>
-</form>
 {% else %}
-<div class="results-layout">
-  <div class="card table-wrap">
-    <table class="moves">
-      <thead><tr><th>#</th><th>Word</th><th>Score</th><th>Start</th><th>Dir</th><th>Leave</th></tr></thead>
-      <tbody>
-      {% for m in result.moves %}
-      <tr class="{% if loop.index0 == selected %}selected{% endif %}">
-        <td>{{ loop.index }}</td>
-        <td><a href="?move={{ loop.index0 }}" hx-get="/game/{{ game.id }}/preview/{{ loop.index0 }}"
-               hx-target="#preview" hx-swap="innerHTML">{{ m.word }}</a></td>
-        <td class="num">{{ m.score.total }}</td>
-        <td>{{ m.start[0] + 1 }},{{ m.start[1] + 1 }}</td>
-        <td>{{ "→" if m.direction == "across" else "↓" }}</td>
-        <td class="mono">{{ m.leave or "—" }}</td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <div id="preview" class="card">
-    {% include "_preview.html" %}
-  </div>
-</div>
-<form action="/game/{{ game.id }}/pass" method="post" class="actions small-actions">
-  <input type="hidden" name="who" value="me">
-  <button type="submit" class="link">I'll pass this turn instead</button>
-</form>
-{% endif %}
+<section class="card suggestions">
+  <h2>Best moves</h2>
+  <p>Enter your rack on the board, then find your best move.</p>
+  <form action="/game/{{ game.id }}/solve" method="post" class="actions">
+    <button type="submit" class="primary big">Find my best move</button>
+  </form>
+</section>
 {% endif %}
