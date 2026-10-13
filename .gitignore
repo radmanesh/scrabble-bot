@@ -9,3 +9,6 @@ __pycache__/
 .import_linter_cache/
 dist/
 .DS_Store
+
+# built from the owner's photos; rebuild with: uv run python -m wwf.vision.train
+assets/models/*.npz

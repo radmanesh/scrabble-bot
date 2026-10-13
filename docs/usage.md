@@ -15,11 +15,11 @@ The project is built in milestones (see the build spec).
 | Solvers: `anchor_trie` ("Smart brute force") and `dummy_random` (demo) | Done (M2) |
 | HTTP API (`wwf.api`) | Done (M5) |
 | Web pages: upload, review, results, options | Done (M6), not yet tried on a real phone |
-| Image recognition (`wwf.vision`) | Not built (M3-4; waiting on screenshot fixtures) |
+| Board reader (`wwf.vision`): finds the board in a photo and reads squares and rack | First version, trained on your labelled photos |
 | Docker image | Not built (M7) |
 
-Milestones 5 and 6 were built ahead of 3 and 4. Until recognition exists, uploading a screenshot
-keeps the image for reference, but you type the board in yourself on the Review page.
+Milestones 5 and 6 were built ahead of 3 and 4. The board reader is a first version: it fills the
+board in from a photo, outlines squares it is unsure of in amber, and you correct the rest.
 
 ## Installing
 
@@ -165,6 +165,59 @@ Use `.` for an empty square, uppercase for a tile and lowercase for a blank.
 
 Add
 `--collect-fixtures some/other/folder` to save somewhere else.
+
+## The board reader
+
+When you take or upload a picture, the app reads the board and rack and fills in the Review grid.
+Squares it is unsure of are outlined in amber. Check those, fix anything wrong, then solve.
+
+How it works:
+1. **Finding the board.** The coloured bonus squares (blue DL, green TL, red DW, orange TW) sit
+   at known places. The reader finds blobs of those colours, works out the position, size and
+   tilt that line the layout up with them, then fits a full perspective correction. This copes
+   with an angled photo and with a hand or tiles covering many of the bonus squares.
+2. **Empty or tile.** An empty plain square is cream, and an empty bonus square has its bonus's
+   colour. So a square holds a tile if it is colourful where it should be plain, a different
+   colour from its bonus, or the right colour but with a dark letter on it.
+3. **Letters.** Each letter is cut out, whether dark or white (the last move's tiles have white
+   letters). It is then matched against letters cut from your labelled photos, plus letters drawn
+   from system fonts so that every letter has examples.
+4. **Rack.** The seven slots below the board are read the same way. Tiles fill from the left, and
+   a tile with no letter is a blank (`?`).
+
+How well it does: on the labelled photos, testing each game position with a reader trained only
+on the others, 98% of squares are read right, and most mistakes are outlined in amber. On a game
+it had never seen it got 224 or 225 of 225 squares and the whole rack right in three photos,
+taking about 0.2 seconds each.
+
+Limits for now:
+- The rack's position is measured for your phone's screen shape. A phone with a different shape
+  needs it re-measured (`RACK_*` in `src/wwf/vision/reader.py`).
+- Blanks already on the board can't be seen, because this WWF version shows no point values on
+  board tiles.
+- Look-alike letters (F/E, P/R, O/Q, C/G) are the usual mistakes. They get rarer as you label
+  more pictures.
+- Only tested on photos taken with a Mac webcam. Screenshots should work, since the colours are
+  the same, but none have been tried yet.
+
+### It learns from your labels
+
+- In collection mode (`--collect-fixtures`), every new picture is read straight away and saved as
+  a draft label. Pictures taken before the reader existed get drafted when the server starts.
+- Saving a corrected label re-trains the reader in the background, usually in under a minute.
+  The Fixtures page shows when it is learning. New pictures use the improved reader as soon as
+  it's done; there's no need to restart.
+
+To retrain or measure it by hand:
+
+```sh
+uv run python -m wwf.vision.train              # rebuild assets/models/reader.npz from checked labels
+uv run python -m wwf.vision.train --evaluate   # accuracy, holding out each game position in turn
+```
+
+The model file `assets/models/reader.npz` is built from your photos and isn't in git. On a fresh
+checkout, run the first command once your labelled fixtures are in place. Without a model, the app
+still works, but you type boards in by hand.
 
 ## The HTTP API
 
@@ -626,7 +679,8 @@ src/wwf/core/             board.py, rack.py, move.py, scoring.py, dictionary.py,
 src/wwf/solvers/          base.py, registry.py, anchor_trie.py, dummy_random.py
 src/wwf/api/              app.py (factory, wwf-serve), services.py, session.py, schemas.py, routes_*.py
 src/wwf/web/              templates/ (Jinja2 pages), static/ (board.css, app.js, vendored htmx)
-src/wwf/vision/           (milestones 3-4)
+src/wwf/vision/           board.py (find the board), reader.py (squares, letters, rack), pipeline.py,
+                          train.py (build/evaluate the reader), synth.py (font letters), perspective.py
 tests/                    core/, solvers/, vision/, api/
 docs/usage.md             this file
 .cache/                   dictionary caches (generated, git-ignored)

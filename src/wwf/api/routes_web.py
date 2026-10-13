@@ -22,7 +22,7 @@ from wwf.api.fixtures import FixtureError, FixtureStore, Source
 from wwf.api.routes_recognize import read_upload
 from wwf.api.routes_solve import solve_session
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK, BoardGrid, check_rack
-from wwf.api.services import ApiError, Services
+from wwf.api.services import DRAFT_NOTE, ApiError, Services
 from wwf.api.session import Session
 from wwf.core.config import project_root
 from wwf.vision.perspective import warp_board_png
@@ -113,7 +113,14 @@ async def _take_picture(
     content_type = svc.check_image(data)
     if svc.fixtures is not None:
         s.fixture_name = svc.fixtures.save_image(data, content_type, _source(source, content_type))
-    await run_blocking(request, svc.attach_image, s, data, content_type)
+    result = await run_blocking(request, svc.attach_image, s, data, content_type)
+    if svc.fixtures is not None and s.fixture_name and result.geometry is not None:
+        # the reader found the board: keep its reading as a draft label to check later
+        rack = "".join(result.rack)
+        svc.fixtures.write_draft(
+            s.fixture_name, result.board, rack, result.geometry.quad, DRAFT_NOTE
+        )
+        s.fixture_status = "draft"
 
 
 @router.post("/upload")
@@ -205,6 +212,7 @@ async def review_submit(request: Request, session_id: str) -> Response:
     if svc.fixtures is not None and s.fixture_name:
         # labelling a fixture: every save writes the label file, so nothing typed is lost
         svc.fixtures.write_label(s.fixture_name, board, rack)
+        svc.schedule_retrain()  # learn from the corrected label
         if form.get("action") != "solve":
             return _redirect(f"/fixtures?labelled={s.fixture_name}")
     if form.get("action") == "save":
@@ -390,6 +398,7 @@ def _fixtures(request: Request) -> FixtureStore:
 @router.get("/fixtures", response_class=HTMLResponse)
 def fixtures_page(request: Request, labelled: str | None = None) -> HTMLResponse:
     store = _fixtures(request)
+    svc = get_services(request)
     items = store.list()
     return _render(
         request,
@@ -399,6 +408,8 @@ def fixtures_page(request: Request, labelled: str | None = None) -> HTMLResponse
         labelled=labelled,
         done=sum(f.status == "verified" for f in items),
         drafts=sum(f.status == "draft" for f in items),
+        reader_loaded=svc.recognizer is not None,
+        retraining=svc.retraining,
     )
 
 
@@ -450,9 +461,14 @@ def fixture_open(request: Request, name: str) -> Response:
         raise ApiError(404, "fixture_not_found", str(e)) from None
     s = _new_session(request)
     data = fixture.image.read_bytes()
-    svc.attach_image(s, data, fixture.content_type)
+    result = svc.attach_image(s, data, fixture.content_type)
     s.fixture_name = name
+    s.fixture_status = fixture.status
     if label is not None:
         s.board, s.rack = label
-    s.fixture_status = fixture.status
+    elif result.geometry is not None:
+        # no label yet: keep what the reader saw as a draft, so it isn't lost if not saved now
+        rack = "".join(result.rack)
+        store.write_draft(name, result.board, rack, result.geometry.quad, DRAFT_NOTE)
+        s.fixture_status = "draft"
     return _redirect(f"/review/{s.id}")

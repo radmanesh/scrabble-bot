@@ -70,6 +70,7 @@ class GridGeometryOut(ApiModel):
     confidence: float
     image_width: int
     image_height: int
+    quad: list[list[float]] = []  # board corners: top-left, top-right, bottom-right, bottom-left
 
 
 class RecognitionResultOut(ApiModel):

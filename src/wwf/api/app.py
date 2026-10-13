@@ -69,10 +69,20 @@ def create_app(
     recognizer: Recognizer | None = None,
 ) -> FastAPI:
     if settings is None:
+        # The real server (wwf-serve): read pictures with the trained board reader. Tests pass
+        # their own Settings and so never load or retrain the real model.
         fixtures = os.environ.get("WWF_FIXTURES_DIR")
-        settings = Settings(fixtures_dir=Path(fixtures) if fixtures else None)
+        settings = Settings(
+            fixtures_dir=Path(fixtures) if fixtures else None,
+            model_path=assets_dir() / "models" / "reader.npz",
+        )
+    cfg = load_board_config()
+    if recognizer is None and settings.model_path is not None:
+        from wwf.api.vision_adapter import load_recognizer
+
+        recognizer = load_recognizer(cfg, settings.model_path)
     svc = Services(
-        cfg=load_board_config(),
+        cfg=cfg,
         solvers=load_registry() if solvers is None else solvers,
         dictionaries=default_dictionary_registry() if dictionaries is None else dictionaries,
         sessions=SessionStore(settings.session_ttl_s) if sessions is None else sessions,
@@ -85,6 +95,8 @@ def create_app(
         svc.dictionaries.get()  # load (or read the cache of) the default dictionary up front
         executor = ThreadPoolExecutor(settings.worker_threads, thread_name_prefix="wwf")
         app.state.executor = executor
+        if svc.fixtures is not None and svc.recognizer is not None:
+            executor.submit(svc.draft_unlabelled_fixtures)  # pictures taken before the reader
 
         async def sweep() -> None:
             while True:

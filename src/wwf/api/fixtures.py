@@ -146,6 +146,27 @@ class FixtureStore:
         path.write_text(json.dumps(label, indent=2) + "\n")
         return path
 
+    def write_draft(
+        self, name: str, grid: BoardGrid, rack: str, quad: list[list[float]] | None, notes: str
+    ) -> Path:
+        """Save a guessed label for a person to check. Never overwrites an existing label."""
+        fixture = self.get(name)
+        path = self.directory / f"{name}.json"
+        if path.exists():
+            return path
+        label: dict[str, object] = {
+            "image": fixture.image.name,
+            "input_type": fixture.input_type,
+            "status": "draft",
+            "board": grid_to_rows(grid),
+            "rack": rack,
+            "notes": notes,
+        }
+        if quad:
+            label["board_quad"] = quad
+        path.write_text(json.dumps(label, indent=2) + "\n")
+        return path
+
 
 def _guess_type(name: str) -> str:
     return "screenshot" if name.startswith("screenshot") else "photo"

@@ -3,7 +3,11 @@
 {% block body_class %}page-fixtures{% endblock %}
 {% block content %}
 <h1>Fixtures</h1>
-{% if labelled %}<p class="notice ok">Saved the label for <code>{{ labelled }}</code>.</p>{% endif %}
+{% if labelled %}<p class="notice ok">Saved the label for <code>{{ labelled }}</code>.
+  {% if retraining %}The board reader is re-learning from it in the background.{% endif %}</p>{% endif %}
+<p class="hint">Board reader: {% if retraining %}<b>learning from your labels…</b>
+  {% elif reader_loaded %}ready. New pictures are filled in automatically as drafts.
+  {% else %}not trained yet. Check a label and it will learn.{% endif %}</p>
 <p class="hint">{{ fixtures | length }} pictures in <code>{{ directory }}</code>: {{ done }} checked,
   {{ drafts }} with a guessed draft, {{ fixtures | length - done - drafts }} with no label.
   Open one to type in the true board and rack, then press <b>Save label</b>. Pictures you don't

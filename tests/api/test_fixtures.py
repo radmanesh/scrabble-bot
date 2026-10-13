@@ -134,7 +134,7 @@ def test_draft_is_shown_then_verified_keeping_extra_fields(
 
     review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
     html = client.get(review).text
-    assert "filled in as a guess" in html
+    assert "filled in automatically" in html
     assert 'value="H"' in html  # the draft pre-fills the grid
 
     client.post(review, data=_form({7: (5, "HELLS")}, "AB", "fixture"))
@@ -154,3 +154,71 @@ def test_save_and_solve_also_writes_the_label(client: TestClient, fixtures_dir: 
     assert r.headers["location"].startswith("/results/")
     label = json.loads((fixtures_dir / f"{name}.json").read_text())
     assert label["board"][7] == ".....HELLO....." and label["rack"] == "SATIRE"
+
+
+# --- with the board reader -----------------------------------------------------------------
+
+
+def _reader_app(tmp_path: Path) -> tuple[TestClient, Path, Path]:
+    import pytest as _pytest
+
+    from wwf.core.config import load_board_config
+    from wwf.vision.synth import available_fonts
+    from wwf.vision.train import build_model
+
+    if not available_fonts():
+        _pytest.skip("no system fonts to render letters")
+    model_path = tmp_path / "reader.npz"
+    build_model([], load_board_config(), synthetic=True).save(model_path)
+    fixtures_dir = tmp_path / "fx"
+    client = TestClient(create_app(Settings(fixtures_dir=fixtures_dir, model_path=model_path)))
+    return client, fixtures_dir, model_path
+
+
+def _synthetic_jpeg() -> bytes:
+    import cv2
+
+    from tests.vision.synthetic import SAMPLE_BOARD, photo
+    from wwf.core.config import load_board_config
+
+    quad = [[420.0, 180.0], [1110.0, 205.0], [1125.0, 905.0], [400.0, 890.0]]
+    return cv2.imencode(".jpg", photo(load_board_config(), SAMPLE_BOARD, quad))[1].tobytes()
+
+
+def test_capture_is_read_into_a_draft(tmp_path: Path) -> None:
+    from tests.vision.synthetic import SAMPLE_BOARD
+
+    client, fixtures_dir, _ = _reader_app(tmp_path)
+    with client:
+        assert client.get("/api/v1/health").json()["model_loaded"] is True
+        name = _upload(client, _synthetic_jpeg(), "photo")
+        label = json.loads((fixtures_dir / f"{name}.json").read_text())
+        assert label["status"] == "draft"
+        assert label["board"] == SAMPLE_BOARD
+        assert len(label["board_quad"]) == 4
+        assert "draft: check it" in client.get("/fixtures").text
+
+        review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
+        html = client.get(review).text
+        assert "filled in automatically" in html and "Board read from the picture" in html
+
+
+def test_saving_a_label_retrains_the_reader(tmp_path: Path) -> None:
+    import time
+
+    client, fixtures_dir, model_path = _reader_app(tmp_path)
+    with client:
+        name = _upload(client, _synthetic_jpeg(), "photo")
+        before = model_path.stat().st_mtime_ns
+        review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
+        form = _form({4: (4, "QUIZ"), 7: (7, "RAVEN"), 9: (3, "JOLTS")}, "AB", "fixture")
+        for r, ch in ((5, "E"), (6, "B"), (8, "A")):
+            form[f"c-{r}-7"] = ch
+        client.post(review, data=form)
+        assert json.loads((fixtures_dir / f"{name}.json").read_text())["status"] == "verified"
+        svc = client.app.state.services  # type: ignore[attr-defined]
+        deadline = time.time() + 60
+        while (svc.retraining or svc.reader_trained_at is None) and time.time() < deadline:
+            time.sleep(0.2)
+        assert svc.reader_trained_at is not None, "retraining did not finish"
+        assert model_path.stat().st_mtime_ns > before

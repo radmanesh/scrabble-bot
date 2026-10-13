@@ -6,6 +6,9 @@ Everything here is synchronous; routes run the slow parts (recognition, solving)
 from __future__ import annotations
 
 import io
+import logging
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +50,10 @@ from wwf.solvers.registry import SolverRegistry
 Recognizer = Callable[[bytes], RecognitionResultOut]
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+DRAFT_NOTE = "Read automatically by the board reader."
+
+
+log = logging.getLogger("wwf.api")
 
 
 class ApiError(Exception):
@@ -66,6 +73,7 @@ class Settings:
     max_upload_bytes: int = MAX_UPLOAD_BYTES
     worker_threads: int = 4
     fixtures_dir: Path | None = None  # set: fixture collection mode (wwf-serve --collect-fixtures)
+    model_path: Path | None = None  # board reader; None disables reading pictures and retraining
 
 
 def unavailable_recognition(warning: str = "recognition_unavailable") -> RecognitionResultOut:
@@ -95,6 +103,10 @@ class Services:
         self.settings = settings
         self.recognizer = recognizer
         self.fixtures = FixtureStore(settings.fixtures_dir) if settings.fixtures_dir else None
+        self._retrain_lock = threading.Lock()
+        self._retraining = False
+        self._retrain_again = False
+        self.reader_trained_at: float | None = None
 
     # --- options ----------------------------------------------------------------------------
 
@@ -279,6 +291,72 @@ class Services:
         violations = validate_move(board, move, dictionary, self.cfg, Rack.from_string(rack))
         score = None if violations else score_out(score_move(board, move, self.cfg))
         return ValidateResponse(violations=violations, score=score)
+
+    # --- learning from labels (fixture collection mode) ------------------------------------
+
+    def schedule_retrain(self) -> bool:
+        """Rebuild the board reader from the labelled fixtures in the background.
+
+        Runs at most one retrain at a time; labels saved meanwhile trigger one more pass after
+        it. Returns False when retraining is off (no fixtures folder or no model path).
+        """
+        if self.fixtures is None or self.settings.model_path is None:
+            return False
+        with self._retrain_lock:
+            if self._retraining:
+                self._retrain_again = True
+                return True
+            self._retraining = True
+        threading.Thread(target=self._retrain_loop, name="wwf-retrain", daemon=True).start()
+        return True
+
+    @property
+    def retraining(self) -> bool:
+        return self._retraining
+
+    def _retrain_loop(self) -> None:
+        from wwf.api.vision_adapter import load_recognizer, retrain
+
+        assert self.fixtures is not None and self.settings.model_path is not None
+        while True:
+            start = time.perf_counter()
+            try:
+                if retrain(self.fixtures.directory, self.cfg, self.settings.model_path):
+                    recognizer = load_recognizer(self.cfg, self.settings.model_path)
+                    if recognizer is not None:
+                        self.recognizer = recognizer
+                        self.reader_trained_at = time.time()
+                    log.info("retrained board reader in %.1fs", time.perf_counter() - start)
+            except Exception:
+                log.exception("retraining the board reader failed")
+            with self._retrain_lock:
+                if self._retrain_again:
+                    self._retrain_again = False
+                    continue
+                self._retraining = False
+                return
+
+    def draft_unlabelled_fixtures(self) -> int:
+        """Read every fixture picture that has no label yet into a draft. Returns how many."""
+        if self.fixtures is None or self.recognizer is None:
+            return 0
+        drafted = 0
+        for fixture in self.fixtures.list():
+            if fixture.status != "none":
+                continue
+            try:
+                result = self.recognizer(fixture.image.read_bytes())
+            except Exception:
+                log.exception("could not read fixture %s", fixture.name)
+                continue
+            if result.geometry is None:
+                continue
+            self.fixtures.write_draft(fixture.name, result.board, "".join(result.rack),
+                                      result.geometry.quad, DRAFT_NOTE)  # fmt: skip
+            drafted += 1
+        if drafted:
+            log.info("drafted labels for %d unlabelled fixtures", drafted)
+        return drafted
 
     # --- catalogues -------------------------------------------------------------------------
 

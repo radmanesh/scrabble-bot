@@ -117,3 +117,19 @@ bonus layout from the spec's, in rows 2-7 and their mirrors. It is now `config/w
 and the default; the spec's layout is kept as `config/wwf_classic.json`, selectable with
 `WWF_BOARD_CONFIG`. At the owner's choice, `words.txt` replaced ENABLE1 as the default dictionary.
 
+**M3-M4, first board reader (photo path).** Built from the owner's labelled photos instead of the
+spec's screenshot-first plan, because the camera is the main input. It differs from the spec in
+three ways:
+- The board is found by matching the coloured bonus squares to the layout (Hough-style voting,
+  then a RANSAC homography), not by projection profiles or phone-screen detection.
+- Occupancy is a colour rule that uses the known layout.
+- Letters are a nearest-neighbour template matcher on HOG features (the spec's template-matcher
+  baseline), with real crops plus font-rendered letters. There is no CNN/ONNX model yet.
+
+Results:
+- On boards held out of training: 98.2% of squares right, most errors flagged for review.
+- On an unseen game: 224-225/225 squares and all racks right, about 0.2 s per photo.
+
+In collection mode new pictures become draft labels automatically, and saving a label retrains
+the reader in the background. Not yet done: screenshots tested, other phone shapes, the CNN.
+
