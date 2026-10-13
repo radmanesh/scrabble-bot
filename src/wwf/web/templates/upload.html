@@ -4,11 +4,20 @@
 <h1>Solve a board</h1>
 
 {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+{% if fixtures_mode %}
+<div class="notice fixture-banner">
+  <b>Collecting fixtures.</b> Every picture is saved to <code>{{ fixture_dir }}</code>
+  ({{ fixture_count }} so far). Take as many as you like, then label them on the
+  <a href="/fixtures">Fixtures page</a>.
+  {% if saved %}<p class="ok">Saved <code>{{ saved }}</code>. Take the next one.</p>{% endif %}
+</div>
+{% endif %}
 <div class="notice error" id="send-error" role="alert" hidden></div>
 
 {# Main way in: the camera. On phones the capture attribute opens the camera app directly. #}
 <section class="card capture-card">
   <form id="camera-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="source" value="photo">
     <label class="button primary big camera-button" id="camera-button">
       <span aria-hidden="true">📷</span> Take a photo of the board
       <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
@@ -25,13 +34,14 @@
     </div>
   </div>
 
-  <p class="hint small">Fit the whole board and your rack in the frame, straight on, without glare.</p>
+  <p class="hint small">Get the whole phone screen in the frame, board and rack included. Some angle or glare is fine.</p>
   <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
 </section>
 
 {# Second way in: an existing screenshot or photo from the device. #}
 <section class="card secondary-card">
   <form id="file-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="source" value="auto">
     <label class="dropzone" id="dropzone">
       <input type="file" name="image" accept="image/*" class="file-hidden" required>
       <span class="dropzone-text">Or upload a screenshot<br><small>choose a file, or drop one here</small></span>

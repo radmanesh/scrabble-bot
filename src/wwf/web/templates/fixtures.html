@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Fixtures · WWF Solver{% endblock %}
+{% block body_class %}page-fixtures{% endblock %}
+{% block content %}
+<h1>Fixtures</h1>
+{% if labelled %}<p class="notice ok">Saved the label for <code>{{ labelled }}</code>.</p>{% endif %}
+<p class="hint">{{ fixtures | length }} pictures in <code>{{ directory }}</code>, {{ done }} labelled.
+  Open one to type in the true board and rack, then press <b>Save label</b>. Pictures you don't
+  want can simply be deleted from that folder.</p>
+
+{% if not fixtures %}
+<p class="notice">No pictures yet. <a href="/">Take some</a>.</p>
+{% else %}
+<ul class="fixture-grid">
+  {% for f in fixtures %}
+  <li class="card fixture{% if f.labelled %} labelled{% endif %}">
+    <img src="/fixtures/{{ f.name }}/image" alt="" loading="lazy">
+    <div>
+      <code class="small">{{ f.name }}</code>
+      <p class="small">{{ f.input_type }} ·
+        {% if f.labelled %}<span class="ok">labelled</span>{% else %}<b>needs a label</b>{% endif %}</p>
+      <form action="/fixtures/{{ f.name }}/open" method="post">
+        <button type="submit"{% if not f.labelled %} class="primary"{% endif %}>
+          {{ "Edit label" if f.labelled else "Label" }}</button>
+      </form>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

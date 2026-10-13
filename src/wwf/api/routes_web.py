@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -15,13 +16,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import FormData
 
-from wwf.api.app import WEB_DIR
+from wwf.api.app import WEB_DIR, run_blocking
 from wwf.api.app import services as get_services
-from wwf.api.routes_recognize import read_upload, recognize_into
+from wwf.api.fixtures import FixtureError, FixtureStore, Source
+from wwf.api.routes_recognize import read_upload
 from wwf.api.routes_solve import solve_session
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK, BoardGrid, check_rack
 from wwf.api.services import ApiError, Services
 from wwf.api.session import Session
+from wwf.core.config import project_root
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
@@ -41,6 +44,7 @@ def _render(request: Request, name: str, status: int = 200, **ctx: Any) -> HTMLR
     ctx.setdefault("bonus", [[BONUS_CLASSES[ch] for ch in row] for row in layout])
     ctx.setdefault("bonus_label", [[BONUS_LABELS[ch] for ch in row] for row in layout])
     ctx.setdefault("size", BOARD_SIZE)
+    ctx.setdefault("fixtures_mode", svc.fixtures is not None)
     return templates.TemplateResponse(request, name, ctx, status_code=status)
 
 
@@ -84,13 +88,37 @@ def _new_session(request: Request) -> Session:
 
 
 @router.get("/", response_class=HTMLResponse)
-def upload_page(request: Request) -> HTMLResponse:
+def upload_page(request: Request, saved: str | None = None) -> HTMLResponse:
     svc = get_services(request)
-    return _render(request, "upload.html", model_loaded=svc.recognizer is not None)
+    ctx: dict[str, Any] = {"model_loaded": svc.recognizer is not None}
+    if svc.fixtures is not None:
+        ctx["fixture_count"] = len(svc.fixtures.list())
+        ctx["fixture_dir"] = _display_path(svc.fixtures.directory)
+        ctx["saved"] = saved
+    return _render(request, "upload.html", **ctx)
+
+
+def _source(value: str, content_type: str) -> Source:
+    """photo or screenshot. Uploaded files ("auto") count as screenshots when they are PNG."""
+    if value == "auto":
+        return "screenshot" if content_type == "image/png" else "photo"
+    return "screenshot" if value == "screenshot" else "photo"
+
+
+async def _take_picture(
+    request: Request, svc: Services, s: Session, data: bytes, source: str
+) -> None:
+    """Recognize the picture into the session; in fixture mode, also save it as a fixture."""
+    content_type = svc.check_image(data)
+    if svc.fixtures is not None:
+        s.fixture_name = svc.fixtures.save_image(data, content_type, _source(source, content_type))
+    await run_blocking(request, svc.attach_image, s, data, content_type)
 
 
 @router.post("/upload")
-async def upload(request: Request, image: UploadFile = File(...)) -> Response:
+async def upload(
+    request: Request, image: UploadFile = File(...), source: str = Form("photo")
+) -> Response:
     svc = get_services(request)
     try:
         data = await read_upload(svc, image)
@@ -99,7 +127,10 @@ async def upload(request: Request, image: UploadFile = File(...)) -> Response:
         return _render(request, "upload.html", e.status, error=_upload_error(e),
                        model_loaded=svc.recognizer is not None)  # fmt: skip
     s = _new_session(request)
-    await recognize_into(request, svc, s, data)
+    await _take_picture(request, svc, s, data, source)
+    if svc.fixtures is not None:
+        # collecting: go straight back to the camera for the next picture
+        return _redirect(f"/?saved={s.fixture_name}")
     return _redirect(f"/review/{s.id}")
 
 
@@ -169,6 +200,9 @@ async def review_submit(request: Request, session_id: str) -> Response:
     if errors:
         return _review(request, s, 422, board=board, rack=rack_cells, errors=errors)
     svc.set_board(s, board, rack)
+    if form.get("action") == "fixture" and svc.fixtures is not None and s.fixture_name:
+        svc.fixtures.write_label(s.fixture_name, board, rack)
+        return _redirect(f"/fixtures?labelled={s.fixture_name}")
     if form.get("action") == "save":
         return _redirect(f"/review/{s.id}?saved=1")
     if not rack:
@@ -188,7 +222,7 @@ def _solve_error(e: ApiError) -> str:
 
 @router.post("/review/{session_id}/image")
 async def review_reupload(
-    request: Request, session_id: str, image: UploadFile = File(...)
+    request: Request, session_id: str, image: UploadFile = File(...), source: str = Form("photo")
 ) -> Response:
     s = _session_or_page(request, session_id)
     if isinstance(s, HTMLResponse):
@@ -196,7 +230,7 @@ async def review_reupload(
     svc = get_services(request)
     try:
         data = await read_upload(svc, image)
-        await recognize_into(request, svc, s, data)
+        await _take_picture(request, svc, s, data, source)
     except ApiError as e:
         return _review(request, s, e.status, errors=[_upload_error(e)])
     return _redirect(f"/review/{s.id}")
@@ -329,3 +363,63 @@ async def options_submit(
         samesite="lax",
     )
     return response
+
+
+# --- fixture collection (wwf-serve --collect-fixtures) -------------------------------------
+
+
+def _display_path(path: Path) -> str:
+    """The folder relative to the project when it is inside it, else absolute."""
+    try:
+        return str(path.resolve().relative_to(project_root().resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _fixtures(request: Request) -> FixtureStore:
+    store = get_services(request).fixtures
+    if store is None:
+        raise ApiError(404, "fixture_mode_off", "start the server with --collect-fixtures")
+    return store
+
+
+@router.get("/fixtures", response_class=HTMLResponse)
+def fixtures_page(request: Request, labelled: str | None = None) -> HTMLResponse:
+    store = _fixtures(request)
+    items = store.list()
+    return _render(
+        request,
+        "fixtures.html",
+        fixtures=items,
+        directory=_display_path(store.directory),
+        labelled=labelled,
+        done=sum(f.labelled for f in items),
+    )
+
+
+@router.get("/fixtures/{name}/image", response_class=Response)
+def fixture_image(request: Request, name: str) -> Response:
+    try:
+        fixture = _fixtures(request).get(name)
+    except FixtureError as e:
+        raise ApiError(404, "fixture_not_found", str(e)) from None
+    return Response(fixture.image.read_bytes(), media_type=fixture.content_type)
+
+
+@router.post("/fixtures/{name}/open")
+def fixture_open(request: Request, name: str) -> Response:
+    """Open a fixture in the review grid, with its existing label if it has one."""
+    svc = get_services(request)
+    store = _fixtures(request)
+    try:
+        fixture = store.get(name)
+        label = store.label_grid(name)
+    except FixtureError as e:
+        raise ApiError(404, "fixture_not_found", str(e)) from None
+    s = _new_session(request)
+    data = fixture.image.read_bytes()
+    svc.attach_image(s, data, fixture.content_type)
+    s.fixture_name = name
+    if label is not None:
+        s.board, s.rack = label
+    return _redirect(f"/review/{s.id}")

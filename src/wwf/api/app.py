@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -22,7 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from wwf.api.schemas import HealthResponse
 from wwf.api.services import ApiError, Recognizer, Services, Settings
 from wwf.api.session import SessionStore
-from wwf.core.config import load_board_config
+from wwf.core.config import assets_dir, load_board_config
 from wwf.core.dictionary import DictionaryRegistry, default_dictionary_registry
 from wwf.solvers.registry import SolverRegistry, load_registry
 
@@ -67,7 +68,9 @@ def create_app(
     sessions: SessionStore | None = None,
     recognizer: Recognizer | None = None,
 ) -> FastAPI:
-    settings = settings or Settings()
+    if settings is None:
+        fixtures = os.environ.get("WWF_FIXTURES_DIR")
+        settings = Settings(fixtures_dir=Path(fixtures) if fixtures else None)
     svc = Services(
         cfg=load_board_config(),
         solvers=load_registry() if solvers is None else solvers,
@@ -169,7 +172,18 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 to reach it from a phone")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true", help="restart on code changes")
+    parser.add_argument(
+        "--collect-fixtures",
+        nargs="?",
+        const=str(assets_dir() / "fixtures"),
+        metavar="DIR",
+        help="save every picture as a test fixture (default dir: assets/fixtures) and add a "
+        "Fixtures page for labelling them",
+    )
     args = parser.parse_args()
+    if args.collect_fixtures:
+        # uvicorn builds the app in its own call to create_app, so pass the setting by env
+        os.environ["WWF_FIXTURES_DIR"] = str(Path(args.collect_fixtures).resolve())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     uvicorn.run(
         "wwf.api.app:create_app", factory=True, host=args.host, port=args.port, reload=args.reload

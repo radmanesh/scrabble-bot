@@ -13,6 +13,7 @@
     <a class="brand" href="/">WWF Solver</a>
     <nav>
       <a href="/">Upload</a>
+      {% if fixtures_mode %}<a href="/fixtures">Fixtures</a>{% endif %}
       <a href="/options{% if session %}?session={{ session.id }}{% endif %}">Options</a>
     </nav>
   </header>

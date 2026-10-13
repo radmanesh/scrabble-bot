@@ -96,6 +96,56 @@ Everything works without JavaScript except:
 
 Without JavaScript, pick the picture and press the button that appears under it.
 
+## Collecting test pictures (fixtures)
+
+Board recognition (milestones 3-4) has to be built and tested against real pictures with known
+answers. Each of these "fixtures" is an image plus a JSON label holding the true board and rack.
+The app has a collection mode for making them:
+
+```sh
+uv run wwf-serve --host 0.0.0.0 --collect-fixtures
+```
+
+1. **Take pictures.** Open the app on your phone at `http://<your computer's IP>:8000`.
+   - Every photo you take, and every screenshot you upload, is saved straight into
+     `assets/fixtures/` on the computer running the server.
+   - The page comes back to the camera after each one, so you can take many in a row.
+   - Camera photos are named `photo-<date>-<time>.jpg`. Uploaded PNGs count as screenshots
+     (`screenshot-...png`); other uploads count as photos.
+2. **Label them.** On your computer, open **Fixtures** in the top bar (`/fixtures`).
+   - It lists every picture and whether it has a label yet.
+   - Press **Label** to open one in the review grid next to the picture.
+   - Type exactly what the picture shows: every tile on the board (lowercase for blanks) and the
+     rack (`?` for a blank).
+   - Press **Save label**. That writes `<name>.json` next to the image. **Edit label** reopens it.
+3. **Prune.** Delete any picture you don't want straight from the folder.
+
+What to capture for the photo path. Variety matters more than count, and 20-40 labelled photos
+is a good target:
+- different angles: straight on, tilted, rotated in the frame
+- different distances, with the phone filling a third of the frame up to all of it
+- glare from a lamp or window across the screen
+- dim rooms, and screen brightness low and high
+- different backgrounds behind the phone
+- the moiré stripes you get when the camera is close to a screen
+- early, mid and late games, including boards with blanks on them
+- 8 or so plain screenshots, for the screenshot path
+
+The label format, if you ever write one by hand:
+
+```json
+{
+  "image": "photo-20261012-203300.jpg",
+  "input_type": "photo",
+  "board": ["...............", "... 15 strings of 15 characters ..."],
+  "rack": "AEIRS?T",
+  "labelled_at": "2026-10-12T20:40:00"
+}
+```
+
+Use `.` for an empty square, uppercase for a tile and lowercase for a blank. Add
+`--collect-fixtures some/other/folder` to save somewhere else.
+
 ## The HTTP API
 
 Interactive documentation for every endpoint is at <http://127.0.0.1:8000/docs> while the server
@@ -557,6 +607,7 @@ docs/usage.md             this file
 | --- | --- |
 | `address already in use` from `wwf-serve` | Another server is on that port. Use `--port 8080`, or stop the other one. |
 | Phone can't open the app | Start with `--host 0.0.0.0`, use the computer's LAN IP, keep both on the same Wi-Fi, and allow Python through the macOS firewall if asked. |
+| Fixtures page says "fixture_mode_off" | Start the server with `--collect-fixtures`. |
 | "Session expired" | Sessions last 30 minutes after last use, and are lost when the server restarts. Start a new board. |
 | First solve takes several seconds | The dictionary is being built and cached. Later runs are fast. |
 | `RegistryError: solvers.json enables unknown solver id` | An enabled entry in `config/solvers.json` has no class in `src/wwf/solvers/`. Fix the id or set `"enabled": false`. |

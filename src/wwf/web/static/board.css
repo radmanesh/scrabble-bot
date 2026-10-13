@@ -121,3 +121,12 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .param label { display: block; font-weight: 500; }
 .solver:not(:has(input[type=radio]:checked)) .params { display: none; }
 .busy { pointer-events: none; opacity: 0.6; }
+
+/* fixtures */
+.fixture-banner .ok, .fixture .ok { color: var(--ok); margin: 6px 0 0; }
+.fixture-label { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.fixture-grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+.fixture { margin: 0; display: grid; gap: 8px; }
+.fixture img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: var(--line); }
+.fixture p { margin: 2px 0 8px; }
+.fixture.labelled { opacity: 0.8; }

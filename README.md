@@ -106,3 +106,8 @@ board in are the second and third options. Pictures are scaled in the browser to
 long side before upload, and the Review page offers **Retake photo** before **Upload instead**.
 Checked in headless Chrome with a fake webcam and with phone touch emulation.
 
+**Fixture collection.** `wwf-serve --collect-fixtures` saves every picture taken or uploaded into
+`assets/fixtures/` and loops back to the camera, so you can take many in a row. The `/fixtures`
+page lists them and opens each one in the review grid; **Save label** writes `<name>.json` with
+the true board and rack. See "Collecting test pictures" in `docs/usage.md`.
+

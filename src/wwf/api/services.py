@@ -8,10 +8,12 @@ from __future__ import annotations
 import io
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
+from wwf.api.fixtures import FixtureStore
 from wwf.api.schemas import (
     BOARD_SIZE,
     BoardGrid,
@@ -63,6 +65,7 @@ class Settings:
     solve_timeout_s: float = 10.0
     max_upload_bytes: int = MAX_UPLOAD_BYTES
     worker_threads: int = 4
+    fixtures_dir: Path | None = None  # set: fixture collection mode (wwf-serve --collect-fixtures)
 
 
 def unavailable_recognition(warning: str = "recognition_unavailable") -> RecognitionResultOut:
@@ -91,6 +94,7 @@ class Services:
         self.sessions = sessions
         self.settings = settings
         self.recognizer = recognizer
+        self.fixtures = FixtureStore(settings.fixtures_dir) if settings.fixtures_dir else None
 
     # --- options ----------------------------------------------------------------------------
 

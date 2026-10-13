@@ -35,7 +35,7 @@
     }
   }
 
-  async function sendImage(action, blob) {
+  async function sendImage(action, blob, source) {
     const progress = document.getElementById("send-progress");
     const error = document.getElementById("send-error");
     if (progress) progress.hidden = false;
@@ -45,6 +45,7 @@
       const image = await prepareImage(blob);
       const body = new FormData();
       body.append("image", image, image.type === "image/png" ? "board.png" : "board.jpg");
+      body.append("source", source || "auto");
       const res = await fetch(action, { method: "POST", body: body });
       if (res.ok && res.redirected) { window.location.href = res.url; return; }
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
@@ -62,7 +63,8 @@
     document.querySelectorAll("form.image-form").forEach((form) => {
       const input = form.querySelector("input[type=file]");
       input.addEventListener("change", () => {
-        if (input.files.length) sendImage(form.action, input.files[0]);
+        const source = form.querySelector("input[name=source]");
+        if (input.files.length) sendImage(form.action, input.files[0], source && source.value);
         input.value = "";
       });
     });
@@ -80,7 +82,7 @@
       e.preventDefault(); zone.classList.remove("drag");
     }));
     zone.addEventListener("drop", (e) => {
-      if (e.dataTransfer.files.length) sendImage(fileForm.action, e.dataTransfer.files[0]);
+      if (e.dataTransfer.files.length) sendImage(fileForm.action, e.dataTransfer.files[0], "auto");
     });
     initViewfinder();
 
@@ -139,7 +141,7 @@
       canvas.width = video.videoWidth; canvas.height = video.videoHeight;
       canvas.getContext("2d").drawImage(video, 0, 0);
       stop();
-      canvas.toBlob((blob) => blob && sendImage(form.action, blob), "image/jpeg", 0.92);
+      canvas.toBlob((blob) => blob && sendImage(form.action, blob, "photo"), "image/jpeg", 0.92);
     });
   }
 

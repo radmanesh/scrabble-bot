@@ -65,18 +65,27 @@
       <button type="submit" name="action" value="save">Save</button>
       <button type="submit" name="action" value="solve" class="primary">Save and solve</button>
     </div>
+    {% if fixtures_mode and session.fixture_name %}
+    <div class="fixture-label">
+      <p class="small">Fixture <code>{{ session.fixture_name }}</code>: enter exactly what the picture
+        shows, including the rack, then save the label.</p>
+      <button type="submit" name="action" value="fixture" class="primary">Save label</button>
+    </div>
+    {% endif %}
     {% if request.query_params.get("saved") %}<p class="notice ok">Saved.</p>{% endif %}
   </form>
 
   <section class="card inline retake">
     <p>Board not right? Take a new picture.</p>
     <form class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="source" value="photo">
       <label class="button primary"><span aria-hidden="true">📷</span> Retake photo
         <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
       </label>
       <noscript><button type="submit">Re-run recognition</button></noscript>
     </form>
     <form class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="source" value="auto">
       <label class="button">Upload instead
         <input type="file" name="image" accept="image/*" class="file-hidden" required>
       </label>

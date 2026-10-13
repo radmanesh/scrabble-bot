@@ -31,6 +31,7 @@ class Session:
     recognition: RecognitionResultOut | None = None
     corrected: bool = False
     last_result: SolveResponse | None = None
+    fixture_name: str | None = None  # set when the picture is a fixture being collected or labelled
     last_access: float = field(default_factory=time.monotonic)
 
 
