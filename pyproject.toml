@@ -1,0 +1,94 @@
+[project]
+name = "wwf-solver"
+version = "0.1.0"
+description = "Words With Friends board recognizer and move solver"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.7",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.10",
+    "pillow>=10.4",
+    "onnxruntime>=1.18",
+]
+
+[project.optional-dependencies]
+train = ["torch>=2.3", "onnx>=1.16"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "hypothesis>=6.100",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "import-linter>=2.0",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wwf"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = ["slow: long-running tests, run nightly in CI"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+packages = ["wwf.core", "wwf.solvers"]
+
+[[tool.mypy.overrides]]
+module = ["wwf.core.*", "wwf.solvers.*"]
+strict = true
+
+[tool.importlinter]
+root_package = "wwf"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "core depends on nothing internal"
+type = "forbidden"
+source_modules = ["wwf.core"]
+forbidden_modules = ["wwf.vision", "wwf.solvers", "wwf.api", "wwf.web"]
+
+[[tool.importlinter.contracts]]
+name = "vision depends only on core"
+type = "forbidden"
+source_modules = ["wwf.vision"]
+forbidden_modules = ["wwf.solvers", "wwf.api", "wwf.web"]
+
+[[tool.importlinter.contracts]]
+name = "solvers depend only on core"
+type = "forbidden"
+source_modules = ["wwf.solvers"]
+forbidden_modules = ["wwf.vision", "wwf.api", "wwf.web"]
+
+[[tool.importlinter.contracts]]
+name = "solvers and vision do not import the web stack"
+type = "forbidden"
+source_modules = ["wwf.core", "wwf.vision", "wwf.solvers"]
+forbidden_modules = ["fastapi", "starlette", "jinja2"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "api does not import OpenCV directly"
+type = "forbidden"
+source_modules = ["wwf.api"]
+forbidden_modules = ["cv2"]
+allow_indirect_imports = true

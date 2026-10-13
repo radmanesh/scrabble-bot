@@ -1,0 +1,31 @@
+{
+  "solvers": [
+    {
+      "id": "anchor_trie",
+      "enabled": true,
+      "default": true
+    },
+    {
+      "id": "dummy_random",
+      "enabled": true
+    },
+    {
+      "id": "gaddag",
+      "enabled": false,
+      "display_name": "GADDAG (planned)",
+      "description": "Same output as anchor_trie, faster move generation."
+    },
+    {
+      "id": "leave_aware",
+      "enabled": false,
+      "display_name": "Leave-aware (planned)",
+      "description": "Ranks moves by score plus static leave values."
+    },
+    {
+      "id": "monte_carlo",
+      "enabled": false,
+      "display_name": "Monte Carlo (planned)",
+      "description": "Simulates opponent replies using the unseen tiles in the bag."
+    }
+  ]
+}
