@@ -107,13 +107,18 @@ def _source(value: str, content_type: str) -> Source:
 
 
 async def _take_picture(
-    request: Request, svc: Services, s: Session, data: bytes, source: str
+    request: Request,
+    svc: Services,
+    s: Session,
+    data: bytes,
+    source: str,
+    previous: BoardGrid | None = None,
 ) -> None:
     """Recognize the picture into the session; in fixture mode, also save it as a fixture."""
     content_type = svc.check_image(data)
     if svc.fixtures is not None:
         s.fixture_name = svc.fixtures.save_image(data, content_type, _source(source, content_type))
-    result = await run_blocking(request, svc.attach_image, s, data, content_type)
+    result = await run_blocking(request, svc.attach_image, s, data, content_type, previous)
     if svc.fixtures is not None and s.fixture_name and result.geometry is not None:
         # the reader found the board: keep its reading as a draft label to check later
         rack = "".join(result.rack)
@@ -240,9 +245,17 @@ async def review_reupload(
     if isinstance(s, HTMLResponse):
         return s
     svc = get_services(request)
+    # The next turn: start from the board as it is on the page now (the browser sends the grid
+    # along, so unsaved corrections count), else as last saved.
+    previous = s.board
+    form = await request.form()
+    if "c-0-0" in form:
+        grid, _, _, errors = _parse_board_form(form)
+        if not errors:
+            previous = grid
     try:
         data = await read_upload(svc, image)
-        await _take_picture(request, svc, s, data, source)
+        await _take_picture(request, svc, s, data, source, previous)
     except ApiError as e:
         return _review(request, s, e.status, errors=[_upload_error(e)])
     return _redirect(f"/review/{s.id}")

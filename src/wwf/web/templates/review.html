@@ -45,7 +45,18 @@
       {% if recognition and not recognition.warnings %}Amber squares need a second look.{% endif %}</p>
 
     {% set unsure = needs_review | map('select') | map('list') | map('length') | sum %}
-    {% if recognition and recognition.geometry %}
+    {% if recognition and recognition.kept_from_previous %}
+    <p class="notice {{ 'ok' if unsure == 0 else '' }}">Next turn: kept the
+      {{ recognition.kept_from_previous }} tiles already on the board{% if recognition.geometry %}
+      and read {{ recognition.new_tiles }} new one{{ 's' if recognition.new_tiles != 1 }}{% endif %}.
+      {% if recognition.conflicts %}<b>{{ recognition.conflicts }}</b> kept
+      tile{{ 's' if recognition.conflicts != 1 }} looked different in the new picture (amber):
+      check {{ 'them' if recognition.conflicts != 1 else 'it' }}.{% endif %}
+      {% if not recognition.geometry %}Couldn't find the board in the new picture, so nothing
+      new was read: type the new tiles in, or take the picture again.{% endif %}
+      {% if unsure and not recognition.conflicts %}<b>{{ unsure }}</b> square{{ 's' if unsure != 1 }}
+      to check (amber).{% endif %}</p>
+    {% elif recognition and recognition.geometry %}
     <p class="notice {{ 'ok' if unsure == 0 else '' }}">Board read from the picture.
       {% if unsure %}<b>{{ unsure }}</b> square{{ 's' if unsure != 1 }} the reader is unsure of
       {{ 'is' if unsure == 1 else 'are' }} outlined in amber.{% else %}It is confident about every
@@ -101,10 +112,14 @@
   </form>
 
   <section class="card inline retake">
-    <p>Board not right? Take a new picture.</p>
+    <div class="retake-text">
+      <h2>Next turn</h2>
+      <p class="small">After a move, take a new picture. Tiles already on this board are kept as
+        they are; only the new tiles and your rack are read from the picture.</p>
+    </div>
     <form id="camera-form" class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
       <input type="hidden" name="source" value="photo">
-      <label class="button primary" id="camera-button"><span aria-hidden="true">📷</span> Retake photo
+      <label class="button primary" id="camera-button"><span aria-hidden="true">📷</span> Take next turn
         <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
       </label>
       <noscript><button type="submit">Re-run recognition</button></noscript>

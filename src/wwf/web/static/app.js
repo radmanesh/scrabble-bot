@@ -48,6 +48,12 @@
       const body = new FormData();
       body.append("image", image, image.type === "image/png" ? "board.png" : "board.jpg");
       body.append("source", source || "auto");
+      // Next turn on the review page: send the board as it is now, unsaved edits included, so
+      // the server keeps those tiles and only reads the new ones from the picture.
+      const boardForm = document.getElementById("board-form");
+      if (boardForm && action.includes("/review/")) {
+        new FormData(boardForm).forEach((v, k) => { if (k.startsWith("c-")) body.append(k, v); });
+      }
       const res = await fetch(action, { method: "POST", body: body });
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
       if (res.ok && res.redirected) {

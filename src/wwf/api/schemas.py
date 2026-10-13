@@ -82,6 +82,11 @@ class RecognitionResultOut(ApiModel):
     warnings: list[str] = []
     input_type: Literal["screenshot", "photo", "unknown"] = "unknown"
     elapsed_ms: int = 0
+    # next turn: tiles kept from the previous board, new tiles read, and kept tiles the new
+    # picture seems to disagree with (flagged for review, but the previous value is kept)
+    kept_from_previous: int = 0
+    new_tiles: int = 0
+    conflicts: int = 0
 
 
 class RecognizeResponse(RecognitionResultOut):

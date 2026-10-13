@@ -208,9 +208,17 @@ class Services:
         except Exception as e:  # recognition failure is a warning, never a crash
             return unavailable_recognition(f"recognition_failed:{type(e).__name__}")
 
-    def attach_image(self, s: Session, data: bytes, content_type: str) -> RecognitionResultOut:
-        """Store the image on the session and replace its board and rack with what was read."""
+    def attach_image(
+        self, s: Session, data: bytes, content_type: str, previous: BoardGrid | None = None
+    ) -> RecognitionResultOut:
+        """Store the image on the session and replace its board and rack with what was read.
+
+        With `previous` (the board from the last turn), tiles already on it are kept and only
+        its empty squares are read from the new picture: tiles never leave a WWF board.
+        """
         result = self.recognize(data)
+        if previous is not None and any(any(row) for row in previous):
+            result = merge_with_previous(result, previous)
         s.image = data
         s.image_type = content_type
         s.recognition = result
@@ -403,6 +411,46 @@ class Services:
                 for i in self.dictionaries.infos()
             ],
         )
+
+
+REVIEW_BELOW = 0.85
+
+
+def merge_with_previous(result: RecognitionResultOut, previous: BoardGrid) -> RecognitionResultOut:
+    """The next turn's reading: previous tiles kept, empty squares taken from the new picture.
+
+    A kept tile is flagged for review only when the new picture confidently shows something
+    else there (a different letter, or nothing), which usually means the earlier board was wrong.
+    """
+    board = [row[:] for row in result.board]
+    confidence = [row[:] for row in result.confidence]
+    review = [row[:] for row in result.needs_review]
+    read_board = result.geometry is not None  # the board was found in the new picture
+    kept = new = conflicts = 0
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            before = previous[r][c]
+            if before is None:
+                new += board[r][c] is not None
+                continue
+            kept += 1
+            seen = result.board[r][c]
+            sure = result.confidence[r][c] >= REVIEW_BELOW
+            disagrees = read_board and sure and (seen is None or seen.upper() != before.upper())
+            board[r][c] = before
+            confidence[r][c] = 0.5 if disagrees else 1.0
+            review[r][c] = disagrees
+            conflicts += disagrees
+    return result.model_copy(
+        update={
+            "board": board,
+            "confidence": confidence,
+            "needs_review": review,
+            "kept_from_previous": kept,
+            "new_tiles": new,
+            "conflicts": conflicts,
+        }
+    )
 
 
 def score_out(s: ScoreBreakdown) -> ScoreOut:

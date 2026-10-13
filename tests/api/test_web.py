@@ -41,7 +41,7 @@ def test_upload_page_puts_the_camera_first(client: TestClient) -> None:
 def test_review_offers_retake_then_upload(client: TestClient) -> None:
     sid = _new_review(client)
     html = client.get(f"/review/{sid}").text
-    retake = html.index("Retake photo")
+    retake = html.index("Take next turn")
     assert html.index('capture="environment"') < html.index("Upload instead")
     assert retake < html.index("Upload instead")
     # on a computer, Retake opens the same webcam viewfinder as the upload page

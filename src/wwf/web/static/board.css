@@ -139,3 +139,6 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .board-shot { display: block; width: 100%; max-width: 620px; aspect-ratio: 1; border-radius: 6px; margin-top: 6px; }
 .shot details { margin-top: 10px; }
 .retake .viewfinder { flex: 1 1 100%; }
+.retake-text { flex: 1 1 100%; }
+.retake-text h2 { margin: 0 0 2px; }
+.retake-text p { margin: 0; }

@@ -79,7 +79,15 @@ Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't su
      to toggle the last square between tile and blank.
    - Enter up to 7 rack tiles below the board, using `?` for a blank.
    - **Save and solve** saves the board and opens the results; **Save** only saves.
-   - **Retake photo** (or **Upload instead**) replaces the board with a new picture.
+   - **Next turn**: after a move, press **Take next turn** (or **Upload instead**) for a new
+     picture.
+     - Tiles already on the board are kept as they are, including corrections you typed but
+       didn't save, because tiles never leave a WWF board.
+     - Only the empty squares are read from the new picture, which is where the newly played
+       tiles are. The rack is read fresh.
+     - If the new picture confidently shows something different on a kept tile, that square is
+       outlined in amber but keeps your value. Usually it means the earlier board had a mistake.
+     - To start a different game, use **Upload** in the top bar.
 3. **Results** (`/results/<id>`): the ranked moves with score, start square (row, column,
    counting from 1), direction and leave. Click a move to see the board after playing it, with the
    new tiles outlined and the score of each word formed. The top shows which solver ran, how long
