@@ -100,13 +100,11 @@
 
   // On a computer, the capture attribute does nothing, so show a live webcam viewfinder instead.
   // Phones keep the native camera app, which takes sharper pictures. Browsers only allow this on
-  // https or localhost; elsewhere the button falls back to the file picker.
-  async function initViewfinder() {
+  // https or localhost; elsewhere the button falls back to the file picker. Whether a camera
+  // exists is found out by asking for it on click: Safari lists no devices before permission.
+  function initViewfinder() {
     const media = navigator.mediaDevices;
     if (!media || !media.getUserMedia || matchMedia("(pointer: coarse)").matches) return;
-    let devices = [];
-    try { devices = await media.enumerateDevices(); } catch (e) { return; }
-    if (!devices.some((d) => d.kind === "videoinput")) return;
 
     const button = document.getElementById("camera-button");
     const finder = document.getElementById("viewfinder");
@@ -132,7 +130,14 @@
           video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
         });
       } catch (err) {
-        input.click(); // camera refused or busy: choose a file instead
+        // Refused, busy or no camera. The click's user activation is gone after the await, so
+        // the file picker can't be opened from here: say what to do instead.
+        const error = document.getElementById("send-error");
+        if (error) {
+          error.textContent = "Couldn't open the camera (" + (err.name || "unavailable") +
+            "). Allow camera access for this site, or use \u201cupload a screenshot\u201d below.";
+          error.hidden = false;
+        }
         return;
       }
       // A laptop's camera faces the user: mirror the preview like a selfie camera so the phone
