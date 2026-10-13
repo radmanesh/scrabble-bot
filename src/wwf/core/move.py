@@ -59,25 +59,37 @@ def word_extent(
 ) -> tuple[tuple[int, int], list[tuple[int, int, Tile]]]:
     """The maximal run of tiles through (row, col) along `direction`, counting `new` tiles.
 
-    Returns the start cell and the list of (row, col, tile) along the run.
+    Returns the start cell and the list of (row, col, tile) along the run. This sits on the
+    solver's scoring hot path, hence the direct indexing.
     """
-    dr, dc = direction.step
-
-    def at(r: int, c: int) -> Tile | None:
-        t = new.get((r, c))
-        return t if t is not None else board.get(r, c)
-
-    r, c = row, col
-    while board.in_bounds(r - dr, c - dc) and at(r - dr, c - dc) is not None:
-        r, c = r - dr, c - dc
-    start = (r, c)
-    run: list[tuple[int, int, Tile]] = []
-    while board.in_bounds(r, c):
-        t = at(r, c)
-        if t is None:
-            break
-        run.append((r, c, t))
-        r, c = r + dr, c + dc
+    cells = board.cells
+    size = board.size
+    get_new = new.get
+    if direction is Direction.ACROSS:
+        line = cells[row]
+        c = col
+        while c > 0 and (line[c - 1] is not None or (row, c - 1) in new):
+            c -= 1
+        start = (row, c)
+        run: list[tuple[int, int, Tile]] = []
+        while c < size:
+            t = line[c] or get_new((row, c))
+            if t is None:
+                break
+            run.append((row, c, t))
+            c += 1
+    else:
+        r = row
+        while r > 0 and (cells[r - 1][col] is not None or (r - 1, col) in new):
+            r -= 1
+        start = (r, col)
+        run = []
+        while r < size:
+            t = cells[r][col] or get_new((r, col))
+            if t is None:
+                break
+            run.append((r, col, t))
+            r += 1
     return start, run
 
 

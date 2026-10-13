@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import pickle
 from collections.abc import Iterable
@@ -68,7 +69,18 @@ def _file_hash(path: Path) -> str:
 
 
 def load_dictionary(path: Path, cache_dir: Path | None = None) -> TrieDictionary:
-    """Load a newline-separated word list. Case is normalised to uppercase."""
+    """Load a newline-separated word list. Case is normalised to uppercase.
+
+    The result is moved out of the garbage collector's view (gc.freeze): the trie is several
+    hundred thousand long-lived objects, and rescanning them on every full collection otherwise
+    roughly doubles move-generation time.
+    """
+    dictionary = _load(path, cache_dir)
+    gc.freeze()
+    return dictionary
+
+
+def _load(path: Path, cache_dir: Path | None) -> TrieDictionary:
     cache_path: Path | None = None
     if cache_dir is not None:
         cache_path = cache_dir / f"{path.stem}.{_file_hash(path)}.v{CACHE_VERSION}.pickle"

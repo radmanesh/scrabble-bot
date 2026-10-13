@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from wwf.core.board import Board, Tile
@@ -62,17 +63,73 @@ def words_formed(board: Board, move: Move) -> list[FormedWord]:
 def _score_word(
     board: Board, fw: FormedWord, new_cells: set[tuple[int, int]], cfg: BoardConfig
 ) -> int:
+    values = cfg.letter_values
+    lm = board.letter_mults
+    wm = board.word_mults
     letters = 0
     word_mult = 1
     for r, c, tile in fw.cells:
-        value = cfg.value(tile.letter, tile.is_blank)
+        value = 0 if tile.is_blank else values[tile.letter]
         if (r, c) in new_cells:
-            bonus = board.bonus(r, c)
-            letters += value * bonus.letter_multiplier
-            word_mult *= bonus.word_multiplier
+            letters += value * lm[r][c]
+            word_mult *= wm[r][c]
         else:
             letters += value
     return letters * word_mult
+
+
+RawPlacement = tuple[int, int, str, bool]  # (row, col, letter, is_blank)
+
+
+def score_raw(board: Board, placements: Sequence[RawPlacement], cfg: BoardConfig) -> int:
+    """Total score of a move given as raw placements, without building any objects.
+
+    Equal to `score_move(board, build_move(board, ...), cfg).total`; solvers use it to rank
+    thousands of candidates and call `score_move` only for the ones they return.
+    """
+    cells = board.cells
+    size = board.size
+    lm = board.letter_mults
+    wm = board.word_mults
+    values = cfg.letter_values
+    new = {(r, c): (letter, blank) for r, c, letter, blank in placements}
+
+    def run_score(r: int, c: int, dr: int, dc: int) -> int:
+        while True:
+            pr, pc = r - dr, c - dc
+            if pr < 0 or pc < 0 or (cells[pr][pc] is None and (pr, pc) not in new):
+                break
+            r, c = pr, pc
+        letters = 0
+        mult = 1
+        length = 0
+        while r < size and c < size:
+            t = cells[r][c]
+            if t is not None:
+                letters += 0 if t.is_blank else values[t.letter]
+            else:
+                n = new.get((r, c))
+                if n is None:
+                    break
+                letters += (0 if n[1] else values[n[0]]) * lm[r][c]
+                mult *= wm[r][c]
+            length += 1
+            r += dr
+            c += dc
+        return letters * mult if length >= 2 else 0
+
+    r0, c0 = placements[0][0], placements[0][1]
+    if len(placements) == 1:
+        total = run_score(r0, c0, 0, 1) + run_score(r0, c0, 1, 0)
+    else:
+        across = all(p[0] == r0 for p in placements)
+        dr, dc = (0, 1) if across else (1, 0)
+        total = run_score(r0, c0, dr, dc)
+        for r, c, _, _ in placements:
+            total += run_score(r, c, dc, dr)
+    if len(placements) >= cfg.bingo_tiles:
+        total += cfg.bingo_bonus
+    return total
 
 
 def score_move(board: Board, move: Move, cfg: BoardConfig) -> ScoreBreakdown:

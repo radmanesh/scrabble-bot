@@ -7,7 +7,7 @@ from tests.conftest import move_of, place, word_move
 from wwf.core.board import Board, Tile
 from wwf.core.config import BoardConfig
 from wwf.core.move import Direction, Placement, build_move
-from wwf.core.scoring import WordScore, score_move
+from wwf.core.scoring import WordScore, score_move, score_raw
 
 
 def test_first_move_hello(cfg: BoardConfig, empty: Board) -> None:
@@ -138,6 +138,10 @@ def test_score_is_transpose_invariant(cfg: BoardConfig, data: st.DataObject) -> 
     b = score_move(t_board, t_move, cfg)
     assert a.total == b.total
     assert _canonical(a.words) == _canonical(b.words)
+
+    # the allocation-free scorer the solver ranks with agrees with the full breakdown
+    raw = [(p.row, p.col, p.tile.letter, p.tile.is_blank) for p in move.placements]
+    assert score_raw(board, raw, cfg) == a.total
 
     # rebuilding the move from scratch on the transposed board agrees too
     rebuilt = build_move(t_board, t_move.placements)

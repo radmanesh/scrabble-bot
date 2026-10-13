@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,11 +27,11 @@ class Bonus(Enum):
 
     @property
     def letter_multiplier(self) -> int:
-        return {Bonus.DL: 2, Bonus.TL: 3}.get(self, 1)
+        return 2 if self is Bonus.DL else 3 if self is Bonus.TL else 1
 
     @property
     def word_multiplier(self) -> int:
-        return {Bonus.DW: 2, Bonus.TW: 3}.get(self, 1)
+        return 2 if self is Bonus.DW else 3 if self is Bonus.TW else 1
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,15 @@ class Board:
 
     def bonus(self, r: int, c: int) -> Bonus:
         return self.bonuses[r][c]
+
+    @cached_property
+    def letter_mults(self) -> tuple[tuple[int, ...], ...]:
+        """Per-cell letter multiplier, precomputed for the scoring hot path."""
+        return tuple(tuple(b.letter_multiplier for b in row) for row in self.bonuses)
+
+    @cached_property
+    def word_mults(self) -> tuple[tuple[int, ...], ...]:
+        return tuple(tuple(b.word_multiplier for b in row) for row in self.bonuses)
 
     @property
     def center(self) -> tuple[int, int]:
