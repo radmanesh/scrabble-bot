@@ -30,10 +30,10 @@ def _setup(tmp_path: Path, files: dict[str, str], config: dict[str, object] | No
 def test_project_registry_offers_both_lists() -> None:
     reg = default_dictionary_registry()
     assert {i.id for i in reg.infos()} >= {"enable1", "words"}
-    assert reg.default_id == "enable1"
+    assert reg.default_id == "words"
     assert not reg.get("enable1").contains("QI")
     assert reg.get("words").contains("QI")
-    assert reg.get() is reg.get("enable1")  # loaded once, then reused
+    assert reg.get() is reg.get("words")  # loaded once, then reused
     with pytest.raises(KeyError):
         reg.get("nope")
 

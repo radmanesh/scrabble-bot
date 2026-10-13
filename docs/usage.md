@@ -237,8 +237,8 @@ from wwf.core.dictionary import default_dictionary_registry
 from wwf.core.rack import Rack
 from wwf.solvers.registry import load_registry
 
-cfg = load_board_config()  # config/wwf_classic.json
-words = default_dictionary_registry().get()  # the default word list (ENABLE1)
+cfg = load_board_config()  # config/wwf_current.json
+words = default_dictionary_registry().get()  # the default word list (words.txt)
 solver = load_registry().get("anchor_trie")
 
 rows = ["..............."] * 15
@@ -254,15 +254,16 @@ for m in result.moves:
 Output:
 
 ```text
-61 AERIEST down (2, 10)
-61 AERIEST down (2, 10)
-61 AIGRETS down (1, 10)
-61 AIRIEST down (2, 10)
-61 ARTIEST down (2, 10)
+57 CHARIEST down (6, 5)
+57 CHARITES down (6, 5)
+57 HAIRIEST down (7, 5)
+57 HARDIEST down (7, 5)
+57 HEARTIES down (7, 5)
 ```
 
-The two AERIEST rows are different moves: the blank stands for the first E in one and the second
-E in the other. Each move here uses all seven tiles, so `leave` is empty. Print
+Each of these plays all seven tiles down through the H of HELLO, so `leave` is empty and the
+35-point bingo bonus is included. The blank stands in for the letter that isn't on the rack
+(the C, an extra I, or the D). Print
 `[(p.row, p.col, p.tile.to_char()) for p in m.move.placements]` to see where the blank went; a
 lowercase letter is a blank.
 
@@ -283,7 +284,7 @@ Later runs load the cache in under a second.
 - Racks are strings: `Rack.from_string("abc?")` gives `("A", "B", "C", "?")`. Case doesn't matter
   for racks, and they hold at most 7 tiles.
 
-Bonus squares come from the layout in `config/wwf_classic.json`:
+Bonus squares come from the layout in `config/wwf_current.json` (see the configuration reference):
 
 | Character | Meaning |
 | --- | --- |
@@ -447,8 +448,8 @@ Two word lists ship in `assets/dictionaries/`:
 
 | Id | File | Notes |
 | --- | --- | --- |
-| `enable1` (default) | `enable1.txt` | Public-domain ENABLE1, ~173k words. Has no QI or ZA. |
-| `words` | `words.txt` | ~194k entries. Includes QI. |
+| `enable1` | `enable1.txt` | Public-domain ENABLE1, ~173k words. Has no QI or ZA. |
+| `words` (default) | `words.txt` | ~194k entries. Includes QI. |
 
 The real WWF dictionary is proprietary, so neither list matches the live game exactly. Expect the
 occasional word the game rejects, or a game word the solver never suggests.
@@ -499,7 +500,16 @@ the ~390k trie nodes, which would otherwise roughly double solve times.
 
 All game data lives in `config/`, not in Python.
 
-### `config/wwf_classic.json`
+### Board configs: `config/wwf_current.json` and `config/wwf_classic.json`
+
+Two layouts ship:
+- **`wwf_current.json` (the default):** the bonus layout of the current WWF app, read from real
+  photos. Its centre square was hidden in every photo, so it's assumed to carry no bonus.
+- **`wwf_classic.json`:** the layout from the build spec.
+
+Both use the same letter values, bag and 35-point bingo. Pick one with
+`WWF_BOARD_CONFIG=wwf_classic.json`. The core scoring tests use the classic layout, since their
+worked examples were computed on it.
 
 | Field | Meaning |
 | --- | --- |
@@ -546,6 +556,7 @@ This file is described under [Dictionaries](#dictionaries).
 | --- | --- |
 | `WWF_ROOT` | Directory that holds `config/` and `assets/`. Defaults to the repo root. |
 | `WWF_DICTIONARY` | Default dictionary id |
+| `WWF_BOARD_CONFIG` | Board config file in `config/` to use, e.g. `wwf_classic.json` |
 
 ## Adding a solver
 
@@ -632,7 +643,7 @@ docs/usage.md             this file
 | First solve takes several seconds | The dictionary is being built and cached. Later runs are fast. |
 | `RegistryError: solvers.json enables unknown solver id` | An enabled entry in `config/solvers.json` has no class in `src/wwf/solvers/`. Fix the id or set `"enabled": false`. |
 | `DictionaryError: default dictionary 'x' is not available` | `WWF_DICTIONARY` or the `"default"` in `config/dictionaries.json` names a list that doesn't exist. |
-| `ConfigError: layout is not symmetric` | A typo in `config/wwf_classic.json`. |
+| `ConfigError: layout is not symmetric` | A typo in the board config file. |
 | A real WWF word is never suggested | It isn't in the chosen word list. Try `words`, or add your own list. |
 | `ValueError: cell (r,c) is occupied` from `with_move` | The move places a tile on an occupied cell. Run `validate_move` first. |
 | Solves are slow in your own scripts | Load dictionaries with `load_dictionary` or the registry so `gc.freeze()` runs. Avoid creating thousands of other long-lived objects between solves. |

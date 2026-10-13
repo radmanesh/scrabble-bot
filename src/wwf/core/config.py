@@ -90,7 +90,11 @@ def board_config_from_dict(data: dict[str, Any]) -> BoardConfig:
     )
 
 
+DEFAULT_BOARD_CONFIG = "wwf_current.json"
+
+
 def load_board_config(path: Path | None = None) -> BoardConfig:
-    path = path or config_dir() / "wwf_classic.json"
+    """The given board config, else config/$WWF_BOARD_CONFIG, else config/wwf_current.json."""
+    path = path or config_dir() / os.environ.get("WWF_BOARD_CONFIG", DEFAULT_BOARD_CONFIG)
     with path.open() as f:
         return board_config_from_dict(json.load(f))

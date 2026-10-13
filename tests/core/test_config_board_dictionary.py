@@ -111,3 +111,13 @@ def test_dictionary_cache_roundtrip(tmp_path: Path) -> None:
     assert len(first) == len(second) == 3
     src.write_text("cat\n")  # new content -> new hash -> rebuilt
     assert len(load_dictionary(src, cache)) == 1
+
+
+def test_current_layout_is_the_default() -> None:
+    from wwf.core.config import load_board_config
+
+    current = load_board_config()
+    assert current.name == "wwf_current"
+    assert current.layout[2] == ".d..d.....d..d."  # read from the owner's photos
+    assert current.layout[7] == "...D...*...D..."
+    assert current.letter_values["Z"] == 10 and current.bingo_bonus == 35

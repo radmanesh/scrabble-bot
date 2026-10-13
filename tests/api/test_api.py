@@ -3,6 +3,11 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from tests.api.conftest import FakeClock, board_with, empty_board
+from wwf.core.board import Board
+from wwf.core.config import load_board_config
+from wwf.core.dictionary import default_dictionary_registry
+from wwf.core.rack import Rack
+from wwf.solvers.anchor_trie import AnchorTrieSolver
 
 API = "/api/v1"
 
@@ -39,7 +44,7 @@ def test_upload_creates_session_with_image(client: TestClient, png_bytes: bytes)
     state = client.get(f"{API}/session/{sid}").json()
     assert state["has_image"] is True
     assert state["solver_id"] == "anchor_trie"
-    assert state["dictionary_id"] == "enable1"
+    assert state["dictionary_id"] == "words"  # config/dictionaries.json default
 
     img = client.get(f"{API}/session/{sid}/image")
     assert img.status_code == 200
@@ -71,7 +76,13 @@ def test_correct_board_and_solve_with_each_solver(client: TestClient, png_bytes:
     assert body["solver_id"] == "anchor_trie"
     assert len(body["moves"]) == 25
     top = body["moves"][0]
-    assert top["score"]["total"] == 61
+    # same answer as calling the solver directly with the app's default layout and dictionary
+    cfg = load_board_config()
+    board = Board.from_rows(cfg, board_with(7, 5, "HELLO"))
+    direct = AnchorTrieSolver().solve(
+        board, Rack.from_string("SATIRE?"), default_dictionary_registry().get("words"), cfg
+    )
+    assert top["score"]["total"] == direct.moves[0].score.total
     assert top["score"]["bingo_bonus"] == 35
     assert len(top["board_after"]) == 15
     for p in top["placements"]:

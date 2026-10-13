@@ -12,7 +12,8 @@ from wwf.core.move import Move, Placement, build_move
 
 @pytest.fixture(scope="session")
 def cfg() -> BoardConfig:
-    return load_board_config()
+    """The spec's classic layout: the worked scoring examples were computed against it."""
+    return load_board_config(project_root() / "config" / "wwf_classic.json")
 
 
 @pytest.fixture(scope="session")

@@ -27,18 +27,20 @@ uv run lint-imports     # enforces core <- {vision, solvers} <- api layering
 ```
 
 Config lives in `config/` (board layout, letter values, solver registry); the default word list is
-`assets/dictionaries/enable1.txt`. The trie is cached in `.cache/` keyed by the word list's hash.
+`assets/dictionaries/words.txt` (ENABLE1 is the alternative). The trie is cached in `.cache/` keyed by the word list's hash.
 Set `WWF_ROOT` to point at a different directory holding `config/` and `assets/`.
 
 **Choosing a dictionary.** `config/dictionaries.json` lists the selectable word lists and the
-default (`enable1`; `words` is the alternative `words.txt`). Any other `.txt` file dropped into
+default (`words`, i.e. `words.txt`; `enable1` is the alternative). Any other `.txt` file dropped into
 `assets/dictionaries/` is offered automatically under its file name. Set `WWF_DICTIONARY=words`
 to change the default without editing config. In code, `default_dictionary_registry().get(id)`
 returns the chosen dictionary (loaded on first use, then cached); the API (M5) will take a
 `dictionary_id` alongside `solver_id`, and the Options page (M6) will show it as a dropdown.
 
-**Dictionary caveat.** The WWF dictionary is proprietary. ENABLE1 is the public default and will
-occasionally accept a word WWF rejects, or the reverse (ENABLE1 has no `QI` or `ZA`, for
+**Dictionary caveat.** The WWF dictionary is proprietary, so no list matches it exactly.
+`words.txt` is the default because it covers words seen in real games that ENABLE1 lacks (DA,
+NESH, SHEN, GI, ROSA, JE), but it still misses some (DUH), and it can accept words WWF rejects
+(ENABLE1 has no `QI` or `ZA`, for
 example). Any newline-separated word list can be swapped in.
 
 ## Milestone notes
@@ -110,4 +112,9 @@ Checked in headless Chrome with a fake webcam and with phone touch emulation.
 `assets/fixtures/` and loops back to the camera, so you can take many in a row. The `/fixtures`
 page lists them and opens each one in the review grid; **Save label** writes `<name>.json` with
 the true board and rack. See "Collecting test pictures" in `docs/usage.md`.
+
+**Real layout and dictionary.** The owner's photos showed the current WWF app uses a different
+bonus layout from the spec's, in rows 2-7 and their mirrors. It is now `config/wwf_current.json`
+and the default; the spec's layout is kept as `config/wwf_classic.json`, selectable with
+`WWF_BOARD_CONFIG`. At the owner's choice, `words.txt` replaced ENABLE1 as the default dictionary.
 
