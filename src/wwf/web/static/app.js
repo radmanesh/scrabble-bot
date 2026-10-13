@@ -94,8 +94,6 @@
     zone.addEventListener("drop", (e) => {
       if (e.dataTransfer.files.length) sendImage(fileForm.action, e.dataTransfer.files[0], "auto");
     });
-    initViewfinder();
-
     const recent = readJSON(RECENT_KEY, []);
     if (recent.length) {
       const list = document.getElementById("recent-list");
@@ -122,8 +120,9 @@
     if (!devices.some((d) => d.kind === "videoinput")) return;
 
     const button = document.getElementById("camera-button");
-    const input = button.querySelector("input");
     const finder = document.getElementById("viewfinder");
+    if (!button || !finder) return; // this page has no camera button
+    const input = button.querySelector("input");
     const frame = finder.querySelector(".viewfinder-frame");
     const video = document.getElementById("viewfinder-video");
     const countdown = document.getElementById("countdown");
@@ -324,6 +323,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     initImageForms();
+    initViewfinder();
     initUpload();
     initReview();
     initResults();

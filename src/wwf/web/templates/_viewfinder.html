@@ -1,0 +1,16 @@
+{# In-page webcam viewfinder for computers, where the camera button's capture attribute does
+   nothing. app.js shows it when the browser allows camera access. Pass stay=True to keep the
+   camera open between pictures (fixture collection). #}
+<div id="viewfinder" class="viewfinder" hidden data-stay="{{ 'yes' if stay else '' }}">
+  <div class="viewfinder-frame">
+    <video id="viewfinder-video" playsinline muted autoplay></video>
+    <div class="countdown" id="countdown" hidden></div>
+  </div>
+  <div class="actions">
+    <button type="button" id="shutter" class="primary big">Capture <span class="kbd">space</span></button>
+    <button type="button" id="shutter-timer">In 3 s</button>
+    <button type="button" id="viewfinder-cancel">{{ "Done" if stay else "Cancel" }}</button>
+  </div>
+  <p class="hint small">Hold the phone up to the camera with the game on screen.
+    {% if stay %}The camera stays open: press space for each new picture.{% endif %}</p>
+</div>

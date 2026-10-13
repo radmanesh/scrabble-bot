@@ -102,9 +102,9 @@
 
   <section class="card inline retake">
     <p>Board not right? Take a new picture.</p>
-    <form class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
+    <form id="camera-form" class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
       <input type="hidden" name="source" value="photo">
-      <label class="button primary"><span aria-hidden="true">📷</span> Retake photo
+      <label class="button primary" id="camera-button"><span aria-hidden="true">📷</span> Retake photo
         <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
       </label>
       <noscript><button type="submit">Re-run recognition</button></noscript>
@@ -116,6 +116,7 @@
       </label>
       <noscript><button type="submit">Upload</button></noscript>
     </form>
+    {% with stay=False %}{% include "_viewfinder.html" %}{% endwith %}
     <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
   </section>
   <div class="notice error" id="send-error" role="alert" hidden></div>

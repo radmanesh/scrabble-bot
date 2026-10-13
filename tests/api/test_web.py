@@ -44,6 +44,8 @@ def test_review_offers_retake_then_upload(client: TestClient) -> None:
     retake = html.index("Retake photo")
     assert html.index('capture="environment"') < html.index("Upload instead")
     assert retake < html.index("Upload instead")
+    # on a computer, Retake opens the same webcam viewfinder as the upload page
+    assert 'id="camera-button"' in html and 'id="viewfinder"' in html
 
 
 def test_upload_redirects_to_review(client: TestClient, png_bytes: bytes) -> None:

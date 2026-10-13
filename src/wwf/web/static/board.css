@@ -138,3 +138,4 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .fixture .draft { color: var(--review); }
 .board-shot { display: block; width: 100%; max-width: 620px; aspect-ratio: 1; border-radius: 6px; margin-top: 6px; }
 .shot details { margin-top: 10px; }
+.retake .viewfinder { flex: 1 1 100%; }
