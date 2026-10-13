@@ -26,10 +26,18 @@
         {% if f.status == "verified" %}<span class="ok">checked</span>
         {% elif f.status == "draft" %}<b class="draft">draft: check it</b>
         {% else %}<b>needs a label</b>{% endif %}</p>
-      <form action="/fixtures/{{ f.name }}/open" method="post">
-        <button type="submit"{% if not f.labelled %} class="primary"{% endif %}>
-          {{ "Edit label" if f.labelled else "Check draft" if f.status == "draft" else "Label" }}</button>
-      </form>
+      {% if problems.get(f.name) %}<p class="small problem">⚠ {{ problems[f.name] }}
+        square{{ "s" if problems[f.name] != 1 }} disagree{{ "" if problems[f.name] != 1 else "s" }}
+        with the picture</p>{% endif %}
+      <div class="actions">
+        <form action="/fixtures/{{ f.name }}/open" method="post">
+          <button type="submit"{% if not f.labelled %} class="primary"{% endif %}>
+            {{ "Edit label" if f.labelled else "Check draft" if f.status == "draft" else "Label" }}</button>
+        </form>
+        <form action="/fixtures/{{ f.name }}/play" method="post">
+          <button type="submit">Play from this picture</button>
+        </form>
+      </div>
     </div>
   </li>
   {% endfor %}

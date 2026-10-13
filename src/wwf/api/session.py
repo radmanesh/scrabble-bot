@@ -33,6 +33,9 @@ class Session:
     last_result: SolveResponse | None = None
     fixture_name: str | None = None  # set when the picture is a fixture being collected or labelled
     fixture_status: str = "none"  # the label's status when the fixture was opened
+    notice: dict[str, Any] | None = None  # shown once on the next page: a picture was refused
+    # labelling a fixture: squares of the label that its picture contradicts (row, col, says)
+    label_problems: list[tuple[int, int, str]] = field(default_factory=list)
     last_access: float = field(default_factory=time.monotonic)
 
 

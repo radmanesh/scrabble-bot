@@ -150,52 +150,63 @@ Without JavaScript, pick the picture and press the button that appears under it.
 
 ## Collecting test pictures (fixtures)
 
-Board recognition (milestones 3-4) has to be built and tested against real pictures with known
-answers. Each of these "fixtures" is an image plus a JSON label holding the true board and rack.
-The app has a collection mode for making them:
+The board reader is built and tested against real pictures with known answers. Each of these
+"fixtures" is an image plus a JSON label holding the true board and rack.
 
 ```sh
 uv run wwf-serve --collect-fixtures
 ```
 
-1. **Take pictures.** There are two ways.
-   - **Mac webcam (the game on your phone):** run the server on the Mac and open
-     <http://127.0.0.1:8000> there. Click **Take a photo of the board** and hold the phone up to
-     the webcam.
-     - Press **space** (or **Capture**) for each picture, or **In 3 s** for a countdown.
-     - The camera stays open between shots, and the preview is mirrored like a selfie camera.
-       Saved pictures are not mirrored.
-     - **Done** or Escape closes it.
+With that flag, **every picture you take while playing is also kept** in `assets/fixtures/`
+(with the reader's guess as a draft label), so playing builds the data set. Nothing about
+playing changes: the camera starts a game as usual.
+
+To take **many pictures in a row** without starting games, open <http://127.0.0.1:8000/?collect=1>
+(there's a link on the home page). The camera stays open between shots, and each picture is
+saved and not turned into a game.
+
+1. **Take pictures.**
+   - **Mac webcam (the game on your phone):** open the app on the Mac, click **Take a photo**,
+     and hold the phone up to the webcam. Press **space** (or **Capture**), or **In 3 s** for a
+     countdown. The preview is mirrored like a selfie camera; saved pictures are not.
    - **Another device's camera:** start with `--host 0.0.0.0` and open
      `http://<your computer's IP>:8000` on it. Its camera app opens for each picture.
-
-   Either way:
-   - Every picture is saved straight into `assets/fixtures/` on the computer running the server.
    - Camera pictures are named `photo-<date>-<time>.jpg`. Uploaded PNGs count as screenshots
      (`screenshot-...png`); other uploads count as photos.
-2. **Label them.** On your computer, open **Fixtures** in the top bar (`/fixtures`).
-   - Each picture is shown as **checked**, **draft: check it** (a guessed label nobody has
-     confirmed), or **needs a label**.
-   - Press **Label** or **Check draft** to open it in the review grid. If the label records where
-     the board is in the photo, a straightened copy of the board is shown next to the grid.
-   - Type or correct exactly what the picture shows: every tile (lowercase for blanks) and the
-     rack (`?` for a blank).
-   - Press **Save label**. That writes `<name>.json` next to the image and marks it checked.
-     **Save label and solve** also saves it. **Edit label** reopens a saved one.
-   - Board tiles in current WWF don't show point values, so a blank played earlier looks like a
-     normal tile. If you know one is there, type it in lowercase.
+2. **Label them.** Open **Fixtures** in the top bar (`/fixtures`).
+   - Each picture is **checked**, **draft: check it** (the reader's guess, nobody has confirmed
+     it) or **needs a label**. A warning shows when a label disagrees with its picture.
+   - **Label** (or **Check draft** / **Edit label**) opens a page that is only for labelling.
+     The picture's straightened board is shown beside the grid. Type exactly what the picture
+     shows, and the rack, then **Save label**.
+   - Squares of the label that the picture contradicts are outlined in red, with a note.
+     That is nearly always a tile typed in from a later turn.
+   - **Play from this picture** (on the Fixtures page, and on the labelling page) starts a real
+     saved game from that picture and its label. Play there, not in the label.
 3. **Prune.** Delete any picture you don't want straight from the folder.
 
-What to capture for the photo path. Variety matters more than count, and 20-40 labelled photos
-is a good target:
-- different angles: straight on, tilted, rotated in the frame
-- different distances, with the phone filling a third of the frame up to all of it
-- glare from a lamp or window across the screen
-- dim rooms, and screen brightness low and high
-- different backgrounds behind the phone
-- the moiré stripes you get when the camera is close to a screen
+**Labels are the reader's lessons, so keep them true to the picture.** The Label page is not a
+game: nothing you type there should be a tile that isn't visible in that picture. To find labels
+that slipped:
+
+```sh
+uv run python -m wwf.vision.train --check
+```
+
+It lists every square where a label strongly disagrees with its picture. Those squares are left
+out of training automatically, but fixing them gives the reader more to learn from.
+
+If several pictures show the same position, they can share one checked label without editing
+each: add them to `assets/fixtures/same_position.json`
+(`{"same_position_as": {"photo-B": "photo-A"}}`); `photo-B` then uses `photo-A`'s board for
+training and testing.
+
+What to capture. Variety matters more than count:
+- different angles and distances, with the phone filling a third of the frame up to all of it
+- glare from a lamp or window, dim rooms, warm lamps, screen brightness low and high
+- different backgrounds, hands and shadows, and the phone's on-screen buttons
 - early, mid and late games, including boards with blanks on them
-- 8 or so plain screenshots, for the screenshot path
+- plain screenshots too
 
 The label format, if you ever write one by hand:
 
@@ -215,47 +226,93 @@ Use `.` for an empty square, uppercase for a tile and lowercase for a blank.
 - An optional `board_quad` gives the board's corners in the photo, in pixels, in the order
   top-left, top-right, bottom-right, bottom-left.
 
-Add
-`--collect-fixtures some/other/folder` to save somewhere else.
+Add `--collect-fixtures some/other/folder` to save somewhere else.
 
 ## The board reader
 
-When you take or upload a picture, the app reads the board and rack and fills in the Review grid.
-Squares it is unsure of are outlined in amber. Check those, fix anything wrong, then solve.
+When you take or upload a picture, the app reads the board and rack and fills in the game page.
+Squares it is unsure of are outlined in amber, and so are rack tiles it is unsure of. Check those,
+fix anything wrong, then solve.
 
 How it works:
 1. **Finding the board.** The coloured bonus squares (blue DL, green TL, red DW, orange TW) sit
-   at known places. The reader finds blobs of those colours, works out the position, size and
-   tilt that line the layout up with them, then fits a full perspective correction. This copes
-   with an angled photo and with a hand or tiles covering many of the bonus squares.
-2. **Empty or tile.** An empty plain square is cream, and an empty bonus square has its bonus's
-   colour. So a square holds a tile if it is colourful where it should be plain, a different
-   colour from its bonus, or the right colour but with a dark letter on it.
-3. **Letters.** Each letter is cut out, whether dark or white (the last move's tiles have white
-   letters). It is then matched against letters cut from your labelled photos, plus letters drawn
-   from system fonts so that every letter has examples.
-4. **Rack.** The seven slots below the board are read the same way. Tiles fill from the left, and
-   a tile with no letter is a blank (`?`).
+   at known places. The reader finds blobs of those colours and votes for the size, tilt and
+   position that line the layout up with them, over a wide range of sizes (so a board filling the
+   picture and one far away both work), then fits a full perspective correction. A picture under
+   a warm lamp is white-balanced and tried again if the first look finds nothing solid. Several
+   candidate positions are compared by how cream-like the empty squares look, so a wrong size
+   (which puts the grid across tile edges) is not chosen.
+2. **Aligning.** Every letter sits at its square's centre, so where the letters actually are
+   corrects the grid by a fraction of a square. This matters late in a game, when most bonus
+   squares are covered.
+3. **Empty or tile.** Every square is measured **relative to this picture's own colours**: how far
+   it is from the picture's empty-cream colour (or from what its bonus kind looks like here), and
+   how strongly a letter-shaped stroke stands out from its own background. A small model learned
+   from your labelled pictures turns that into a probability. Because it is relative, a warm
+   lamp, glare and vignetting don't turn empty squares into tiles.
+4. **Letters.** Each letter is cut out, whether dark or white (the last move's tiles have white
+   letters), and matched against letters cut from your labelled photos plus letters drawn from
+   system fonts so every letter has examples.
+5. **Rack.** The seven slots below the board are read the same way. A tile with no letter is a
+   blank (`?`). If the rack is partly outside the picture it isn't read, and your rack is left
+   alone.
 
-How well it does: on the labelled photos, testing each game position with a reader trained only
-on the others, 98% of squares are read right, and most mistakes are outlined in amber. On a game
-it had never seen it got 224 or 225 of 225 squares and the whole rack right in three photos,
-taking about 0.2 seconds each.
+### Reading the next turn
+
+When a game already has a board, a new picture is read against it:
+
+- **Tiles stay.** Tiles never leave a WWF board, so every tile on file is kept and only empty
+  squares are read.
+- **Is it the same game?** The reader checks how well the picture agrees with the board on file.
+  If it doesn't (a picture of another game, or a board cut off at the edge), nothing is changed
+  and a message says why.
+- **The board on file tunes the reader** to this picture's light: it knows which squares are
+  tiles and which are empty, so the few new tiles are judged against that.
+- **New tiles must join the game.** A new tile that isn't connected to the tiles on the board
+  (a reflection, an on-screen button) is ignored. At most 21 new tiles are accepted in one turn;
+  more than that is a misreading and none are added.
+- **Kept tiles are never overwritten.** If the picture confidently shows a kept tile as empty, it
+  is outlined in amber and keeps its letter.
+
+What you may see after a picture:
+
+| Message | Meaning |
+| --- | --- |
+| *That picture doesn't look like this game's board* | It disagrees with the tiles on file. Is it another game? Nothing changed. |
+| *The board runs off the edge of that picture* | Hold the phone further away so the whole board and rack are in view. Nothing changed. |
+| *Your rack is partly outside the picture* | The rack wasn't read; check the rack squares. |
+| *More new tiles than one turn can add* | Probably glare. None were added: retake, or type them in. |
+| *Some marks aren't joined to the rest of the game* | A reflection or button over the board. They're outlined in amber. |
+
+### How well it does
+
+On pictures held out of training, each game position in turn (`python -m wwf.vision.train
+--evaluate`):
+
+| Test | Result |
+| --- | --- |
+| First picture of a game: squares read right | 99.0% (58 errors in 26 pictures: 14 tiles invented, 29 missed) |
+| Next turn, a few tiles removed from the board on file | 6 errors over 20 pictures; none refused wrongly |
+| Empty board under a heavy orange lamp | 0 tiles (it used to read 168) |
+| Picture of a different game | refused every time |
+
+Each picture takes 0.3 to 1 second.
 
 Limits for now:
 - The rack's position is measured for your phone's screen shape. A phone with a different shape
   needs it re-measured (`RACK_*` in `src/wwf/vision/reader.py`).
 - Blanks already on the board can't be seen, because this WWF version shows no point values on
   board tiles.
-- Look-alike letters (F/E, P/R, O/Q, C/G) are the usual mistakes. They get rarer as you label
+- Look-alike letters (F/E, P/R, O/Q, C/G, I/L) are the usual mistakes, and get rarer as you label
   more pictures.
-- Only tested on photos taken with a Mac webcam. Screenshots should work, since the colours are
-  the same, but none have been tried yet.
+- The board is found from its coloured bonus squares. If glare or a hand hides most of them, or
+  the picture is tinted so heavily that colours cannot be told apart, it says it couldn't find
+  the board rather than guessing.
 
 ### It learns from your labels
 
-- In collection mode (`--collect-fixtures`), every new picture is read straight away and saved as
-  a draft label. Pictures taken before the reader existed get drafted when the server starts.
+- With `--collect-fixtures`, every new picture is read straight away and saved as a draft label.
+  Pictures taken before the reader existed get drafted when the server starts.
 - Saving a corrected label re-trains the reader in the background, usually in under a minute.
   The Fixtures page shows when it is learning. New pictures use the improved reader as soon as
   it's done; there's no need to restart.
@@ -265,6 +322,7 @@ To retrain or measure it by hand:
 ```sh
 uv run python -m wwf.vision.train              # rebuild assets/models/reader.npz from checked labels
 uv run python -m wwf.vision.train --evaluate   # accuracy, holding out each game position in turn
+uv run python -m wwf.vision.train --check      # labels that their pictures contradict
 ```
 
 The model file `assets/models/reader.npz` is built from your photos and isn't in git. On a fresh
@@ -735,8 +793,9 @@ src/wwf/solvers/          base.py, registry.py, anchor_trie.py, dummy_random.py
 src/wwf/api/              app.py (factory, wwf-serve), services.py, session.py, schemas.py,
                           games.py (saved games), gameplay.py (turns, undo), routes_*.py
 src/wwf/web/              templates/ (Jinja2 pages), static/ (board.css, app.js, vendored htmx)
-src/wwf/vision/           board.py (find the board), reader.py (squares, letters, rack), pipeline.py,
-                          train.py (build/evaluate the reader), synth.py (font letters), perspective.py
+src/wwf/vision/           board.py (find the board), align.py (fine alignment), occupancy.py (tile or
+                          empty, relative to the picture), reader.py (letters, rack), pipeline.py,
+                          train.py (build, evaluate, check labels), synth.py, perspective.py
 tests/                    core/, solvers/, vision/, api/
 docs/usage.md             this file
 .cache/                   dictionary caches (generated, git-ignored)

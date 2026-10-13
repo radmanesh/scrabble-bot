@@ -5,6 +5,7 @@ Everything here is synchronous; routes run the slow parts (recognition, solving)
 
 from __future__ import annotations
 
+import inspect
 import io
 import logging
 import threading
@@ -113,6 +114,7 @@ class Services:
         self._retraining = False
         self._retrain_again = False
         self.reader_trained_at: float | None = None
+        self.label_problems: dict[str, int] = {}  # picture -> squares its picture contradicts
 
     # --- options ----------------------------------------------------------------------------
 
@@ -232,30 +234,45 @@ class Services:
             raise ApiError(400, "undecodable_image", str(e)) from None
         return Image.MIME.get(fmt, "application/octet-stream")
 
-    def recognize(self, data: bytes) -> RecognitionResultOut:
+    def recognize(
+        self,
+        data: bytes,
+        previous: BoardGrid | None = None,
+        hint_quad: list[list[float]] | None = None,
+    ) -> RecognitionResultOut:
         if self.recognizer is None:
             return unavailable_recognition()
         try:
+            takes_context = "previous" in inspect.signature(self.recognizer).parameters
+            if takes_context:
+                return self.recognizer(data, previous=previous, hint_quad=hint_quad)
             return self.recognizer(data)
         except Exception as e:  # recognition failure is a warning, never a crash
+            log.exception("reading a picture failed")
             return unavailable_recognition(f"recognition_failed:{type(e).__name__}")
 
     def attach_image(
         self, s: Session, data: bytes, content_type: str, previous: BoardGrid | None = None
     ) -> RecognitionResultOut:
-        """Store the image on the session and replace its board and rack with what was read.
+        """Read a picture into the session: board, rack and the picture itself.
 
-        With `previous` (the board from the last turn), tiles already on it are kept and only
-        its empty squares are read from the new picture: tiles never leave a WWF board.
-        """
-        result = self.recognize(data)
-        if previous is not None and any(any(row) for row in previous):
-            result = merge_with_previous(result, previous)
+        With `previous` (the board on file), tiles already on it are kept and only its empty
+        squares are read from the new picture: tiles never leave a WWF board. A picture that
+        does not belong to that board is refused and changes nothing."""
+        have_previous = previous is not None and any(any(row) for row in previous)
+        hint = s.recognition.geometry.quad if s.recognition and s.recognition.geometry else None
+        result = self.recognize(data, previous if have_previous else None, hint)
+        if have_previous and not result.merged and previous is not None:
+            result = merge_with_previous(result, previous)  # a reader that does not merge itself
+        if result.rejected:
+            s.notice = {"kind": "refused", "warnings": result.warnings, "match": result.match}
+            return result
         s.image = data
         s.image_type = content_type
         s.recognition = result
         s.board = [row[:] for row in result.board]
-        s.rack = "".join(result.rack)
+        if "rack_cut_off" not in result.warnings:
+            s.rack = "".join(result.rack)  # an unreadable rack leaves yours alone
         s.corrected = False
         s.last_result = None
         if isinstance(s, Game):
@@ -363,7 +380,9 @@ class Services:
         while True:
             start = time.perf_counter()
             try:
-                if retrain(self.fixtures.directory, self.cfg, self.settings.model_path):
+                issues = retrain(self.fixtures.directory, self.cfg, self.settings.model_path)
+                if issues is not None:
+                    self._note_label_problems(issues)
                     recognizer = load_recognizer(self.cfg, self.settings.model_path)
                     if recognizer is not None:
                         self.recognizer = recognizer
@@ -377,6 +396,36 @@ class Services:
                     continue
                 self._retraining = False
                 return
+
+    def _note_label_problems(self, issues: list[tuple[str, int, int]]) -> None:
+        counts: dict[str, int] = {}
+        for name, _, _ in issues:
+            counts[name] = counts.get(name, 0) + 1
+        self.label_problems = counts
+
+    def refresh_label_problems(self) -> None:
+        """Find labels that contradict their pictures (run in the background at startup)."""
+        if self.fixtures is None or self.recognizer is None:
+            return
+        try:
+            from wwf.vision.train import label_issues
+
+            found = label_issues(self.fixtures.directory, self.cfg)
+            self._note_label_problems([(i.name, i.row, i.col) for i in found])
+        except Exception:
+            log.exception("checking labels against their pictures failed")
+
+    def picture_problems(self, image: bytes, board: BoardGrid) -> list[tuple[int, int, str]]:
+        """Squares of `board` that `image` contradicts, using the loaded reader."""
+        if self.recognizer is None:
+            return []
+        from wwf.api.vision_adapter import check_picture
+
+        try:
+            return check_picture(self.recognizer, image, board, self.cfg)
+        except Exception:
+            log.exception("checking a label against its picture failed")
+            return []
 
     def draft_unlabelled_fixtures(self) -> int:
         """Read every fixture picture that has no label yet into a draft. Returns how many."""

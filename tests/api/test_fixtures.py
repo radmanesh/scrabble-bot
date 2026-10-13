@@ -34,14 +34,17 @@ def _image(fmt: str) -> bytes:
 
 
 def _upload(client: TestClient, data: bytes, source: str) -> str:
+    """Take a picture in "collect pictures" mode: it is saved and the camera comes back."""
     r = client.post(
-        "/upload", files={"image": ("x", data, "image/jpeg")}, data={"source": source},
+        "/upload",
+        files={"image": ("x", data, "image/jpeg")},
+        data={"source": source, "collect": "1"},
         follow_redirects=False,
-    )  # fmt: skip
+    )
     assert r.status_code == 303
     location: str = r.headers["location"]
-    assert location.startswith("/?saved=")  # straight back to the camera
-    return location.split("=", 1)[1]
+    assert location.startswith("/?collect=1&saved=")  # straight back to the camera
+    return location.split("saved=", 1)[1]
 
 
 def test_pictures_are_saved_and_listed(client: TestClient, fixtures_dir: Path) -> None:
@@ -53,8 +56,8 @@ def test_pictures_are_saved_and_listed(client: TestClient, fixtures_dir: Path) -
     assert len({photo, shot, gallery_photo}) == 3  # same-second pictures get distinct names
     assert (fixtures_dir / f"{photo}.jpg").exists() and (fixtures_dir / f"{shot}.png").exists()
 
-    home = client.get(f"/?saved={photo}").text
-    assert "Collecting fixtures" in home and "3 so far" in home and photo in home
+    home = client.get(f"/?collect=1&saved={photo}").text
+    assert "Collecting test pictures" in home and "3 so far" in home and photo in home
     assert str(fixtures_dir) in home
 
     page = client.get("/fixtures").text
@@ -71,6 +74,7 @@ def test_label_round_trip(client: TestClient, fixtures_dir: Path) -> None:
     r = client.post(f"/fixtures/{name}/open", follow_redirects=False)
     review = r.headers["location"]
     html = client.get(review).text
+    assert "Label a test picture" in html and "Play this position as a game" in html
     assert "Save label" in html and name in html
     assert 'value="save"' not in html  # one save path while labelling: no session-only Save
 
@@ -100,7 +104,7 @@ def test_label_round_trip(client: TestClient, fixtures_dir: Path) -> None:
 def test_fixture_mode_off_by_default() -> None:
     with TestClient(create_app(Settings())) as c:
         assert c.get("/fixtures").status_code == 404
-        assert "Collecting fixtures" not in c.get("/").text
+        assert "test pictures" not in c.get("/").text
 
 
 def test_names_cannot_escape_the_folder(client: TestClient, tmp_path: Path) -> None:
@@ -224,3 +228,55 @@ def test_saving_a_label_retrains_the_reader(tmp_path: Path) -> None:
             time.sleep(0.2)
         assert svc.reader_trained_at is not None, "retraining did not finish"
         assert model_path.stat().st_mtime_ns > before
+
+
+def test_a_normal_upload_while_collecting_is_a_game_and_a_fixture(
+    client: TestClient, fixtures_dir: Path
+) -> None:
+    r = client.post("/upload", files={"image": ("x.jpg", _image("JPEG"), "image/jpeg")},
+                    data={"source": "photo"}, follow_redirects=False)  # fmt: skip
+    assert r.headers["location"].startswith("/game/")  # you stay in the game
+    assert len(list(fixtures_dir.glob("photo-*.jpg"))) == 1  # and the picture is kept as data
+    gid = r.headers["location"].rsplit("/", 1)[1]
+    page = client.get(f"/game/{gid}").text
+    assert "Label a test picture" not in page  # it is a game, not a labelling page
+    assert gid in client.get("/").text  # and it is listed
+
+
+def test_play_from_a_picture_makes_a_saved_game(client: TestClient, fixtures_dir: Path) -> None:
+    name = _upload(client, _image("JPEG"), "photo")
+    (fixtures_dir / f"{name}.json").write_text(
+        json.dumps({
+            "image": f"{name}.jpg", "input_type": "photo", "status": "verified",
+            "board": ["." * 15] * 7 + [".....HELLO....."] + ["." * 15] * 7, "rack": "SATIRE?",
+        })
+    )  # fmt: skip
+    r = client.post(f"/fixtures/{name}/play", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/game/")
+    gid = r.headers["location"].rsplit("/", 1)[1]
+    state = client.get(f"/api/v1/games/{gid}").json()
+    assert state["board"][7][5:10] == list("HELLO") and state["rack"] == "SATIRE?"
+    assert gid in client.get("/").text
+    # labelling it is untouched
+    assert json.loads((fixtures_dir / f"{name}.json").read_text())["status"] == "verified"
+
+
+def test_labelling_page_marks_squares_the_picture_contradicts(tmp_path: Path) -> None:
+    from tests.vision.synthetic import SAMPLE_BOARD
+
+    client, fixtures_dir, _ = _reader_app(tmp_path)
+    with client:
+        name = _upload(client, _synthetic_jpeg(), "photo")
+        board = [list(row) for row in SAMPLE_BOARD]
+        board[1][1] = "X"  # a tile the picture does not show
+        board[3][2] = "Y"
+        (fixtures_dir / f"{name}.json").write_text(
+            json.dumps({
+                "image": f"{name}.jpg", "input_type": "photo", "status": "verified",
+                "board": ["".join(r) for r in board], "rack": "",
+            })
+        )  # fmt: skip
+        review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
+        html = client.get(review).text
+        assert html.count("contradiction") >= 2 and "disagree with the" in html
+        assert "row 2, column 2" in html

@@ -82,11 +82,14 @@ def _new_game(request: Request, *, ephemeral: bool = False, name: str = "") -> G
 
 
 @router.get("/", response_class=HTMLResponse)
-def upload_page(request: Request, saved: str | None = None) -> HTMLResponse:
+def upload_page(
+    request: Request, saved: str | None = None, collect: str | None = None
+) -> HTMLResponse:
     svc = get_services(request)
     ctx: dict[str, Any] = {
         "model_loaded": svc.recognizer is not None,
         "games": [_game_summary(g) for g in svc.games.saved()],
+        "collect": bool(collect) and svc.fixtures is not None,
     }
     if svc.fixtures is not None:
         ctx["fixture_count"] = len(svc.fixtures.list())
@@ -128,7 +131,12 @@ async def _take_picture(
     if svc.fixtures is not None:
         s.fixture_name = svc.fixtures.save_image(data, content_type, _source(source, content_type))
     result = await run_blocking(request, svc.attach_image, s, data, content_type, previous)
-    if svc.fixtures is not None and s.fixture_name and result.geometry is not None:
+    if (
+        svc.fixtures is not None
+        and s.fixture_name
+        and result.geometry is not None
+        and not result.rejected
+    ):
         # the reader found the board: keep its reading as a draft label to check later
         rack = "".join(result.rack)
         svc.fixtures.write_draft(
@@ -139,7 +147,10 @@ async def _take_picture(
 
 @router.post("/upload")
 async def upload(
-    request: Request, image: UploadFile = File(...), source: str = Form("photo")
+    request: Request,
+    image: UploadFile = File(...),
+    source: str = Form("photo"),
+    collect: str = Form(""),
 ) -> Response:
     svc = get_services(request)
     try:
@@ -148,12 +159,14 @@ async def upload(
     except ApiError as e:
         return _render(request, "upload.html", e.status, error=_upload_error(e),
                        model_loaded=svc.recognizer is not None)  # fmt: skip
-    # While collecting fixtures a picture is just data, and the page goes back to the camera;
-    # that game is not kept. (Play from it later with "Play from this picture".)
-    game = _new_game(request, ephemeral=svc.fixtures is not None)
+    # "Collect pictures" mode: a picture is just data, and the page goes back to the camera
+    # for the next one; that game is not kept (play from it later from the Fixtures page).
+    # Otherwise this is a game, and the picture is also kept as a test picture when collecting.
+    collecting = bool(collect) and svc.fixtures is not None
+    game = _new_game(request, ephemeral=collecting)
     await _take_picture(request, svc, game, data, source)
-    if svc.fixtures is not None:
-        return _redirect(f"/?saved={game.fixture_name}")
+    if collecting:
+        return _redirect(f"/?collect=1&saved={game.fixture_name}")
     svc.games.save(game)
     return _redirect(f"/game/{game.id}")
 
@@ -315,6 +328,7 @@ def fixtures_page(request: Request, labelled: str | None = None) -> HTMLResponse
         drafts=sum(f.status == "draft" for f in items),
         reader_loaded=svc.recognizer is not None,
         retraining=svc.retraining,
+        problems=svc.label_problems,
     )
 
 
@@ -372,6 +386,7 @@ def fixture_open(request: Request, name: str) -> Response:
     if label is not None:
         game.board, game.rack = label
         game.follow_board()
+        game.label_problems = svc.picture_problems(data, game.board)
     elif result.geometry is not None:
         # no label yet: keep what the reader saw as a draft, so it isn't lost if not saved now
         rack = "".join(result.rack)

@@ -95,6 +95,10 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         suspects = ", ".join(
             f"{letter} ({n} more than the bag holds)" for letter, n in sorted(bag.over.items())
         )
+    unsure_rack = list(rec.rack_needs_review) if rec else []
+    ctx.setdefault("rack_review", unsure_rack + [False] * (MAX_RACK - len(unsure_rack)))
+    ctx.setdefault("notice", game.notice)
+    game.notice = None  # shown once
     ctx.setdefault("board", game.board)
     ctx.setdefault("rack", rack)
     ctx.setdefault("errors", [])
@@ -120,6 +124,7 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         selected=selected,
         step=3 if game.phase == "opponent_turn" else (2 if result and result.moves else 1),
         labelling=svc.fixtures is not None and game.ephemeral and bool(game.fixture_name),
+        problem_squares={(r, c): says for r, c, says in game.label_problems},
         board_image_url=_board_image_url(svc, game),
         turns=list(reversed(game.turns)),
         **ctx,

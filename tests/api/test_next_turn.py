@@ -138,3 +138,89 @@ def test_unsure_new_tiles_stay_flagged(client: TestClient, reader: FakeReader) -
     _next_turn(client, sid)
     rec = _state(client, sid)["recognition"]
     assert rec["needs_review"][8][9] is True and rec["conflicts"] == 0
+
+
+# --- a reader that is told about the board on file -------------------------------------------
+
+
+class ContextReader:
+    """Records what it is told and returns whatever reading the test queues."""
+
+    def __init__(self) -> None:
+        self.next: RecognitionResultOut = _reading({}, "")
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(
+        self,
+        data: bytes,
+        previous: list[list[str | None]] | None = None,
+        hint_quad: list[list[float]] | None = None,
+    ) -> RecognitionResultOut:
+        self.calls.append({"previous": previous, "hint_quad": hint_quad})
+        return self.next
+
+
+@pytest.fixture
+def ctx_reader() -> ContextReader:
+    return ContextReader()
+
+
+@pytest.fixture
+def ctx_client(ctx_reader: ContextReader) -> Iterator[TestClient]:
+    with TestClient(create_app(Settings(), recognizer=ctx_reader)) as c:
+        yield c
+
+
+def test_the_reader_is_told_the_board_on_file(
+    ctx_client: TestClient, ctx_reader: ContextReader
+) -> None:
+    ctx_reader.next = _reading({7: (5, "HELLO")}, "ABCDEFG")
+    sid = _first_turn(ctx_client, ctx_reader)  # type: ignore[arg-type]
+    assert ctx_reader.calls[0]["previous"] is None  # nothing on file for the first picture
+
+    ctx_reader.next = _reading({7: (5, "HELLO"), 8: (5, "A")}, "XYZ")
+    _next_turn(ctx_client, sid)
+    told = ctx_reader.calls[1]["previous"]
+    assert told is not None and told[7][5:10] == list("HELLO")  # type: ignore[index]
+    assert ctx_reader.calls[1]["hint_quad"] is None or isinstance(
+        ctx_reader.calls[1]["hint_quad"], list
+    )
+
+
+def test_a_refused_picture_changes_nothing(
+    ctx_client: TestClient, ctx_reader: ContextReader
+) -> None:
+    ctx_reader.next = _reading({7: (5, "HELLO")}, "ABCDEFG")
+    sid = _first_turn(ctx_client, ctx_reader)  # type: ignore[arg-type]
+    before = _state(ctx_client, sid)
+
+    refused = _reading({}, "")
+    refused.rejected = True
+    refused.merged = True
+    refused.warnings = ["picture_does_not_match"]
+    refused.match = 0.55
+    ctx_reader.next = refused
+    html = _next_turn(ctx_client, sid)
+    after = _state(ctx_client, sid)
+    assert after["board"] == before["board"] and after["rack"] == before["rack"]
+    assert after["has_image"] is True
+    assert "doesn't look like this game's board" in html and "55%" in html
+    assert "Nothing was changed" in html
+    # the notice is shown once
+    assert "doesn't look like this game's board" not in ctx_client.get(f"/game/{sid}").text
+
+
+def test_an_unreadable_rack_leaves_yours_alone(
+    ctx_client: TestClient, ctx_reader: ContextReader
+) -> None:
+    ctx_reader.next = _reading({7: (5, "HELLO")}, "ABCDEFG")
+    sid = _first_turn(ctx_client, ctx_reader)  # type: ignore[arg-type]
+    cut = _reading({7: (5, "HELLO"), 8: (5, "A")}, "")
+    cut.merged = True
+    cut.warnings = ["rack_cut_off"]
+    ctx_reader.next = cut
+    html = _next_turn(ctx_client, sid)
+    state = _state(ctx_client, sid)
+    assert state["rack"] == "ABCDEFG"
+    assert state["board"][8][5] == "A"  # the board part of the reading is still used
+    assert "rack is partly outside the picture" in html

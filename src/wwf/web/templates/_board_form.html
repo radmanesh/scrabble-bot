@@ -1,6 +1,40 @@
 <form id="board-form" class="card board-card" action="/game/{{ game.id }}/board" method="post" autocomplete="off">
   <h2>Board</h2>
   {% if saved %}<p class="notice ok">Saved.</p>{% endif %}
+  {% if notice %}
+  <div class="notice error" role="alert">
+    {% if "picture_does_not_match" in notice.warnings %}
+    That picture doesn't look like this game's board{% if notice.match %} (it agrees with the
+    tiles on file only {{ (notice.match * 100) | round | int }}%){% endif %}. Is it a different
+    game? Nothing was changed.
+    {% elif "board_cut_off" in notice.warnings %}
+    The board runs off the edge of that picture, so nothing was read. Hold the phone a little
+    further away so the whole board and your rack are in view. Nothing was changed.
+    {% else %}
+    That picture couldn't be used, so nothing was changed.
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if recognition %}
+  {% set w = recognition.warnings %}
+  {% if "rack_cut_off" in w %}
+  <p class="notice">Your rack is partly outside the picture, so it wasn't read: check the rack below.</p>
+  {% endif %}
+  {% if "too_many_new_tiles" in w %}
+  <p class="notice error">More new tiles than one turn can add appeared, so none were added.
+    That is usually glare or a shadow. Retake the picture, or type the new tiles in.</p>
+  {% endif %}
+  {% if "stray_tiles" in w %}
+  <p class="notice">Some marks aren't joined to the rest of the game (a reflection or a button over
+    the board?). They're outlined in amber: clear any that aren't tiles.</p>
+  {% endif %}
+  {% if "ignored_marks" in w %}
+  <p class="hint small">Ignored a mark on an empty board (a button or reflection).</p>
+  {% endif %}
+  {% if "board_cut_off" in w and recognition.geometry %}
+  <p class="notice">Part of the board was outside the picture: squares there weren't read.</p>
+  {% endif %}
+  {% endif %}
   <p class="hint small">Type letters into the squares. <span class="kbd">lowercase</span> marks a blank
     tile (or use <b>Blank</b>). Arrow keys move; Backspace clears.
     {% if recent %}The last move's tiles have a blue edge.{% endif %}</p>
@@ -57,7 +91,7 @@
     <div class="board-row" role="row">
       {% for c in range(size) %}
       {% set v = board[r][c] or "" %}
-      <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in pending_positions %} pending{% endif %}{% if v and v.islower() %} blank{% endif %}"
+      <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in pending_positions %} pending{% endif %}{% if (r, c) in problem_squares %} contradiction{% endif %}{% if v and v.islower() %} blank{% endif %}"
              name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"
              data-r="{{ r }}" data-c="{{ c }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
              autocapitalize="characters" spellcheck="false" inputmode="text"
@@ -70,7 +104,7 @@
   <div class="rack-row">
     <span class="rack-label">Rack</span>
     {% for t in rack %}
-    <input class="cell rack-cell{% if t == '?' %} blank{% endif %}" name="r-{{ loop.index0 }}" value="{{ t }}"
+    <input class="cell rack-cell{% if t == '?' %} blank{% endif %}{% if rack_review[loop.index0] and t %} review{% endif %}" name="r-{{ loop.index0 }}" value="{{ t }}"
            maxlength="1" placeholder=" " autocapitalize="characters" spellcheck="false" aria-label="Rack tile {{ loop.index }}">
     {% endfor %}
   </div>

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import cv2
@@ -9,16 +8,10 @@ import pytest
 
 from tests.vision.synthetic import SAMPLE_BOARD, photo
 from wwf.core.config import BoardConfig, assets_dir, load_board_config
-from wwf.vision.board import find_board
+from wwf.vision.board import find_board, visible_mask
+from wwf.vision.occupancy import OccupancyModel, measure
 from wwf.vision.pipeline import Recognizer, decode, read_image
-from wwf.vision.reader import (
-    ReaderModel,
-    board_image,
-    cell_crops,
-    glyph_features,
-    glyph_mask,
-    tile_probability,
-)
+from wwf.vision.reader import ReaderModel, board_image, glyph_features, glyph_mask
 from wwf.vision.synth import available_fonts, render_tile
 from wwf.vision.train import build_model, evaluate, load_examples
 
@@ -50,15 +43,15 @@ def test_no_board_in_a_blank_picture(current: BoardConfig) -> None:
     assert find_board(np.full((800, 600, 3), 128, np.uint8), current) is None
 
 
-def test_occupancy_rule(current: BoardConfig) -> None:
+def test_occupancy(current: BoardConfig) -> None:
     img = photo(current, SAMPLE_BOARD, QUAD)
     fit = find_board(img, current)
     assert fit is not None
-    crops = cell_crops(board_image(img, fit))
+    m = measure(board_image(img, fit), current, visible_mask(img.shape, fit.homography))
+    p = OccupancyModel.default().probability(m)
     for r in range(15):
         for c in range(15):
-            p = tile_probability(crops[r, c], current.layout[r][c])
-            assert (p >= 0.5) == (SAMPLE_BOARD[r][c] != "."), (r, c, p)
+            assert (p[r, c] >= 0.5) == (SAMPLE_BOARD[r][c] != "."), (r, c, p[r, c])
 
 
 def test_glyphs_dark_or_white_and_blanks() -> None:
@@ -104,20 +97,85 @@ def test_recognize_bytes_and_decode(current: BoardConfig, synthetic_model: Reade
 FIXTURES = assets_dir() / "fixtures"
 
 
-def _verified() -> int:
+def _labelled() -> int:
     if not FIXTURES.is_dir():
         return 0
-    return sum(
-        json.loads(p.read_text()).get("status") == "verified" for p in FIXTURES.glob("*.json")
-    )
+    return len(load_examples(FIXTURES))
+
+
+needs_pictures = pytest.mark.skipif(
+    _labelled() < 5, reason="needs labelled pictures in assets/fixtures"
+)
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(_verified() < 2, reason="needs labelled photos in assets/fixtures")
+@needs_pictures
 def test_held_out_accuracy_on_real_photos(current: BoardConfig,
                                           capsys: pytest.CaptureFixture[str]) -> None:  # fmt: skip
+    """Each position is held out of training in turn; the first picture of a game is read
+    well, and a simulated next turn (a few tiles removed from the board on file) gains almost
+    nothing wrong."""
+    import re
+
     evaluate(load_examples(FIXTURES), current)
-    summary = capsys.readouterr().out.strip().splitlines()[-1]
-    print(summary)
-    accuracy = float(summary.split("accuracy ")[1].split("%")[0])
-    assert accuracy >= 97.0, summary
+    out = capsys.readouterr().out
+    print(out.strip().splitlines()[-2:])
+    accuracy = float(re.search(r"first picture: ([0-9.]+)%", out).group(1))  # type: ignore[union-attr]
+    assert accuracy >= 97.5, out.strip().splitlines()[-2:]
+    errors, pictures = (
+        int(x)
+        for x in re.search(r"next turn:\s+(\d+) errors over (\d+) pictures", out).groups()  # type: ignore[union-attr]
+    )
+    assert errors <= pictures, f"{errors} next-turn errors over {pictures} pictures"
+    assert "0 pictures refused" in out, "a picture of the right game was refused"
+
+
+@pytest.mark.slow
+@needs_pictures
+def test_empty_boards_read_empty_in_any_light(current: BoardConfig) -> None:
+    """The empty-board photos include a heavily orange-tinted one that once read as 168 tiles."""
+    examples = {e.name: e for e in load_examples(FIXTURES)}
+    empties = [e for e in examples.values() if all(ch == "." for row in e.board for ch in row)]
+    if not empties:
+        pytest.skip("no empty-board pictures")
+    model = build_model(list(examples.values()), current, synthetic=True)
+    from wwf.vision.pipeline import read_image
+
+    for ex in empties:
+        r = read_image(ex.image, model, current)
+        assert r is not None, ex.name
+        assert sum(c is not None for row in r.board for c in row) == 0, ex.name
+
+
+@pytest.mark.slow
+@needs_pictures
+def test_a_picture_of_another_game_is_refused(current: BoardConfig) -> None:
+    from wwf.vision.pipeline import read_image
+
+    def letters(e: object) -> dict[tuple[int, int], str]:
+        return {
+            (r, c): ch.upper()
+            for r, row in enumerate(e.board)  # type: ignore[attr-defined]
+            for c, ch in enumerate(row)
+            if ch != "."
+        }
+
+    examples = [e for e in load_examples(FIXTURES) if len(letters(e)) > 30]
+    pair = None
+    for i, a in enumerate(examples):
+        for b in examples[i + 1 :]:
+            la, lb = letters(a), letters(b)
+            shared = la.keys() & lb.keys()
+            # the same game keeps its letters from turn to turn; another game does not
+            if len(shared) >= 8 and sum(la[k] == lb[k] for k in shared) / len(shared) < 0.4:
+                pair = (a, b)
+                break
+        if pair:
+            break
+    if pair is None:
+        pytest.skip("needs pictures of two different games")
+    a, b = pair
+    model = build_model(examples, current, synthetic=True)
+    previous = [[None if ch == "." else ch.upper() for ch in row] for row in a.board]
+    r = read_image(b.image, model, current, previous=previous)
+    assert r is not None and r.rejected and "picture_does_not_match" in r.warnings

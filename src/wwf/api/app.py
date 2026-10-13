@@ -99,6 +99,7 @@ def create_app(
         app.state.executor = executor
         if svc.fixtures is not None and svc.recognizer is not None:
             executor.submit(svc.draft_unlabelled_fixtures)  # pictures taken before the reader
+            executor.submit(svc.refresh_label_problems)
 
         async def sweep() -> None:
             while True:

@@ -2,10 +2,8 @@
 
 Two small nearest-neighbour models, both built from labelled fixtures (see train.py):
 
-* occupancy (a rule, no training): an empty plain square is cream with no colour, and an empty
-  bonus square has its bonus's colour. So a square is a tile if it is colourful where the layout
-  says plain, or a different colour from its bonus square, or (a coral tile on a red DW square)
-  the right colour but holding a dark letter.
+* occupancy (is a square empty or a tile?): see `wwf.vision.occupancy`, which measures squares
+  relative to each picture's own colours.
 * letters: the glyph is cut out by taking pixels much darker or much lighter than the tile colour
   (last-played tiles have white letters), centred and scaled with its aspect ratio kept, then
   described with HOG features and matched against labelled glyphs.
@@ -13,13 +11,14 @@ Two small nearest-neighbour models, both built from labelled fixtures (see train
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from wwf.vision.board import BONUS_HUES, BoardFit
+from wwf.vision.board import BoardFit
+from wwf.vision.occupancy import OccupancyModel
 
 CELL = 48  # canonical pixels per board square
 GLYPH = 24  # glyph image side
@@ -76,6 +75,21 @@ def slot_has_tile(slot: np.ndarray) -> bool:
     return float(((hsv[..., 1] > 55) & (hsv[..., 2] > 90)).mean()) > 0.08
 
 
+def rack_visible(fit: BoardFit, shape: tuple[int, ...]) -> float:
+    """Fraction of the rack strip that lies inside the picture."""
+    h, w = shape[:2]
+    corners = np.float64(
+        [[RACK_LEFT, RACK_TOP], [RACK_RIGHT, RACK_TOP], [RACK_RIGHT, RACK_BOTTOM],
+         [RACK_LEFT, RACK_BOTTOM]]
+    )  # fmt: skip
+    pts = fit.to_image(corners)
+    x0, y0 = pts.min(axis=0)
+    x1, y1 = pts.max(axis=0)
+    ix = max(0.0, min(x1, w) - max(x0, 0.0))
+    iy = max(0.0, min(y1, h) - max(y0, 0.0))
+    return float(ix * iy / max((x1 - x0) * (y1 - y0), 1e-6))
+
+
 def slot_boxes(fit: BoardFit) -> list[tuple[int, int, int, int]]:
     """Image-space bounding boxes (x, y, w, h) of the rack slots."""
     width = (RACK_RIGHT - RACK_LEFT) / RACK_SLOTS
@@ -109,49 +123,14 @@ def _bbox(pts: np.ndarray) -> tuple[int, int, int, int]:
 # --- features ----------------------------------------------------------------------------------
 
 
-def _sigmoid(x: float) -> float:
-    return float(1.0 / (1.0 + np.exp(-x)))
-
-
-def _hue_distance(h: float, lo: int, hi: int) -> float:
-    """Distance from hue h to the range [lo, hi] on OpenCV's 180-degree hue circle."""
-    if lo <= h <= hi:
-        return 0.0
-    d = min(abs(h - lo), abs(h - hi))
-    return float(min(d, 180 - d))
-
-
-def tile_probability(crop: np.ndarray, layout_char: str) -> float:
-    """Probability that a board square holds a tile, from colour and the expected bonus square."""
-    h, w = crop.shape[:2]
-    m = int(0.1 * h)
-    inner = crop[m : h - m, m : w - m]
-    hsv = cv2.cvtColor(inner, cv2.COLOR_BGR2HSV)
-    # cream squares sit near saturation 20; glare can wash tiles down to ~60
-    colourful = (hsv[..., 1] > 55) & (hsv[..., 2] > 90)
-    frac = float(colourful.mean())
-    p_colour = _sigmoid((frac - 0.18) / 0.04)
-    hue_range = BONUS_HUES.get(layout_char)
-    if hue_range is None or frac < 0.05:
-        return p_colour  # a plain square, or no colour at all
-    hues = hsv[..., 0][colourful].astype(np.float32)
-    # circular median is overkill: red sits at both ends, so fold hues above 170 to below 0
-    hues = np.where(hues > 170, hues - 180, hues)
-    p_other_colour = _sigmoid((_hue_distance(float(np.median(hues)), *hue_range) - 4.0) / 1.5)
-    gray = cv2.cvtColor(inner, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    dark = float((gray < np.percentile(gray, 70) - 45).mean())
-    p_letter = _sigmoid((dark - 0.025) / 0.008)  # bonus squares carry white text, never dark
-    return p_colour * max(p_other_colour, p_letter)
-
-
-def glyph_mask(crop: np.ndarray, rack: bool = False) -> np.ndarray | None:
-    """The letter as a GLYPH x GLYPH float image (letter bright), or None if there is none.
+def _letter_blob(
+    crop: np.ndarray, rack: bool = False
+) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int], tuple[int, int, int]] | None:
+    """Find the letter in a square: (strokes, mask, box (y0, y1, x0, x1), (margin, ih, iw)).
 
     Letters are only ~50 grey levels from their textured tile, and last-played tiles have white
     letters, so: subtract a local background (median blur), pick the polarity from the tails,
-    threshold adaptively (Otsu) to find the letter's box, then take the contrast values (not the
-    binary mask) inside that box so thin strokes survive.
-    """
+    threshold adaptively (Otsu) to find the letter's box."""
     h, w = crop.shape[:2]
     m = int(0.08 * h)
     inner = cv2.cvtColor(crop[m : h - m, m : w - m], cv2.COLOR_BGR2GRAY)
@@ -189,9 +168,21 @@ def glyph_mask(crop: np.ndarray, rack: bool = False) -> np.ndarray | None:
         return None
     sel = np.isin(labels, keep)
     ys, xs = np.nonzero(sel)
-    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    y0, y1, x0, x1 = int(ys.min()), int(ys.max()) + 1, int(xs.min()), int(xs.max()) + 1
     if (y1 - y0) < (0.45 if rack else 0.3) * ih:
         return None  # too small to be a letter (a blank's glossy pattern, specks)
+    return scaled, sel, (y0, y1, x0, x1), (m, ih, iw)
+
+
+def glyph_mask(crop: np.ndarray, rack: bool = False) -> np.ndarray | None:
+    """The letter as a GLYPH x GLYPH float image (letter bright), or None if there is none.
+
+    The contrast values (not the binary mask) inside the letter's box are kept so thin strokes
+    survive, then the letter is centred on a square canvas with its aspect ratio kept."""
+    found = _letter_blob(crop, rack)
+    if found is None:
+        return None
+    scaled, sel, (y0, y1, x0, x1), (_, ih, iw) = found
     pad = 1
     y0, x0 = max(0, y0 - pad), max(0, x0 - pad)
     y1, x1 = min(ih, y1 + pad), min(iw, x1 + pad)
@@ -203,6 +194,16 @@ def glyph_mask(crop: np.ndarray, rack: bool = False) -> np.ndarray | None:
     oy, ox = (side - gh) // 2, (side - gw) // 2
     canvas[oy : oy + gh, ox : ox + gw] = np.clip(patch, 0, 1)
     return cv2.resize(canvas, (GLYPH, GLYPH), interpolation=cv2.INTER_AREA)
+
+
+def glyph_centre(crop: np.ndarray) -> tuple[float, float] | None:
+    """Where the letter's box is centred in its square, as fractions (x, y) of the square."""
+    found = _letter_blob(crop)
+    if found is None:
+        return None
+    _, _, (y0, y1, x0, x1), (m, _, _) = found
+    h, w = crop.shape[:2]
+    return (m + (x0 + x1) / 2) / w, (m + (y0 + y1) / 2) / h
 
 
 def _hog(img: np.ndarray, cell: int = 6, bins: int = 9) -> np.ndarray:
@@ -238,15 +239,27 @@ def glyph_features(glyph: np.ndarray) -> np.ndarray:
 class ReaderModel:
     glyph_x: np.ndarray  # (M, G) glyph features
     glyph_y: np.ndarray  # (M,) letter index 0-25
+    occupancy: OccupancyModel = field(default_factory=lambda: OccupancyModel.default())
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(path, glyph_x=self.glyph_x, glyph_y=self.glyph_y)
+        np.savez_compressed(
+            path,
+            glyph_x=self.glyph_x,
+            glyph_y=self.glyph_y,
+            occ_plain=self.occupancy.w_plain,
+            occ_bonus=self.occupancy.w_bonus,
+        )
 
     @classmethod
     def load(cls, path: Path) -> ReaderModel:
         with np.load(path) as data:
-            return cls(glyph_x=data["glyph_x"], glyph_y=data["glyph_y"])
+            occ = (
+                OccupancyModel(data["occ_plain"], data["occ_bonus"])
+                if "occ_plain" in data.files
+                else OccupancyModel.default()  # a model file from before squares were learned
+            )
+            return cls(glyph_x=data["glyph_x"], glyph_y=data["glyph_y"], occupancy=occ)
 
     def letters(self, feats: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Best letter index and a 0-1 confidence (margin to the best other letter)."""

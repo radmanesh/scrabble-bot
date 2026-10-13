@@ -142,3 +142,19 @@ phones. `wwf.core.diff` and `wwf.core.entry` hold the pure board-diff and word-t
 New endpoints: `GET /api/v1/games` and `/api/v1/games/{id}`. Saved games exceed the spec's
 "no persistence" (a JSON file per game, no database).
 
+**Reader hardening (why next turns used to get "messed up").** Real pictures showed three
+failures: a warm lamp turned every cream square into a "tile" (an empty board read as 168 tiles),
+a zoomed picture was found at the wrong scale, and a bad reading was carried into every later turn
+because tiles never leave the board. The reader now:
+- measures squares relative to each picture's own colours (a learned model, `wwf.vision.occupancy`)
+- searches board scale over a wide range and compares candidates by how cream-like the empty
+  squares look
+- aligns the grid from where letters sit (`wwf.vision.align`)
+- reads a new turn against the board on file: it checks the picture matches, keeps every tile,
+  and refuses pictures of another game, cut-off boards and implausible numbers of new tiles
+
+Held out of training: 99.0% of squares on first pictures, 6 errors over 20 simulated next turns.
+The Label page in fixture mode is now only for labelling (with squares the picture contradicts
+outlined), and **Play from this picture** starts a real game; the earlier habit of playing
+through the Label page was corrupting labels. `train --check` lists contradicted squares.
+

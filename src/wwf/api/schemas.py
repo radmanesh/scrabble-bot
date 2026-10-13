@@ -78,6 +78,7 @@ class RecognitionResultOut(ApiModel):
     rack: list[str]
     confidence: list[list[float]]
     needs_review: list[list[bool]]
+    rack_needs_review: list[bool] = []
     geometry: GridGeometryOut | None = None
     warnings: list[str] = []
     input_type: Literal["screenshot", "photo", "unknown"] = "unknown"
@@ -87,6 +88,9 @@ class RecognitionResultOut(ApiModel):
     kept_from_previous: int = 0
     new_tiles: int = 0
     conflicts: int = 0
+    merged: bool = False  # the reader already applied the previous board
+    rejected: bool = False  # the picture does not belong to this board: nothing was changed
+    match: float | None = None  # how well the picture agrees with the board on file (0.5-1)
 
 
 class RecognizeResponse(RecognitionResultOut):

@@ -5,6 +5,12 @@ those colours, vote for the similarity transform (scale, rotation, translation) 
 layout cells of each colour on a blob of that colour, then refine to a full homography from the
 matched pairs. Tiles cover some bonus squares, and tiles of similar colours add stray blobs; the
 voting tolerates both.
+
+The scale is searched over a wide range set by the image size, not guessed from blob sizes (tile
+textures and hands fool that), and several candidate fits are compared by how much the *empty
+squares* look like empty squares (cream, in this picture's own light). A wrong scale puts the grid
+across letters and tile edges and scores near zero on that. A board that runs off the picture is
+reported rather than silently misread.
 """
 
 from __future__ import annotations
@@ -40,11 +46,18 @@ class BoardFit:
     matches: int  # bonus squares that agree with the fit
     expected: int  # bonus squares in the layout
     confidence: float  # 0-1
+    cream: float = 1.0  # fraction of plain squares that look like empty squares in this picture
+    visible: float = 1.0  # fraction of the 225 squares whose centre is inside the picture
 
     def to_image(self, pts: np.ndarray) -> np.ndarray:
         """Map (N, 2) cell coordinates (col, row) to image pixels."""
         p = cv2.perspectiveTransform(pts.reshape(-1, 1, 2).astype(np.float64), self.homography)
         return p.reshape(-1, 2)
+
+    @property
+    def cut_off(self) -> bool:
+        """Part of the board is outside the picture."""
+        return self.visible < 0.97
 
     @property
     def quad(self) -> list[list[float]]:
@@ -87,14 +100,17 @@ def _layout_cells(cfg: BoardConfig) -> dict[str, np.ndarray]:
 def _vote(
     blobs: list[Blob], cells: dict[str, np.ndarray], pitch: float, theta: float
 ) -> tuple[int, np.ndarray]:
-    """Best translation for a given scale and rotation, and how many blobs it explains."""
+    """Best translation for a given scale and rotation, and how many blobs it explains.
+
+    Only blobs whose size suits this scale vote: a bonus square is about 0.65 of a cell wide."""
     cos, sin = np.cos(theta), np.sin(theta)
     rot = np.array([[cos, -sin], [sin, cos]]) * pitch
+    lo, hi = 0.4 * pitch, 0.95 * pitch
     votes: list[np.ndarray] = []
     owners: list[np.ndarray] = []
     for i, b in enumerate(blobs):
         layout = cells.get(b.kind)
-        if layout is None:
+        if layout is None or not lo <= b.size <= hi:
             continue
         t = np.array([b.x, b.y]) - layout @ rot.T
         votes.append(t)
@@ -110,7 +126,7 @@ def _vote(
     pairs = np.unique(np.stack([key_ids, o], axis=1), axis=0)
     uniq, counts = np.unique(pairs[:, 0], return_counts=True)
     best, best_t = 0, np.zeros(2)
-    for u in uniq[np.argsort(counts)[-5:]]:
+    for u in uniq[np.argsort(counts)[-3:]]:
         # re-centre on the bin and count blobs within one bin width, so bin edges don't split
         centre = v[key_ids == u].mean(axis=0)
         near = np.linalg.norm(v - centre, axis=1) < bin_size
@@ -120,38 +136,84 @@ def _vote(
     return best, best_t
 
 
-def find_board(bgr: np.ndarray, cfg: BoardConfig) -> BoardFit | None:
-    blobs = detect_bonus_blobs(bgr)
-    cells = _layout_cells(cfg)
-    expected = sum(len(v) for v in cells.values())
-    if len(blobs) < 6:
-        return None
-    side = float(np.median([b.size for b in blobs]))
-    # A bonus square fills roughly 55-90% of its cell's width. Search coarsely, then refine
-    # around the best guess.
-    best = (0, 0.0, 0.0, np.zeros(2))
-    for pitch in side / np.linspace(0.55, 0.9, 8):
-        for theta in np.deg2rad(np.arange(-16, 17, 4)):
-            n, t = _vote(blobs, cells, float(pitch), float(theta))
-            if n > best[0]:
-                best = (n, float(pitch), float(theta), t)
-    _, p0, th0, _ = best
-    for pitch in p0 * np.linspace(0.95, 1.05, 5):
-        for theta in th0 + np.deg2rad(np.arange(-3, 4, 1)):
-            n, t = _vote(blobs, cells, float(pitch), float(theta))
-            if n > best[0]:
-                best = (n, float(pitch), float(theta), t)
-    n, pitch, theta, t = best
-    if n < 6:
-        return None
+# --- checking a fit against the picture --------------------------------------------------------
+
+CHECK_PX = 24  # pixels per cell for the check
+CREAM_DE = 14.0  # Lab distance below which a square counts as "the same cream"
+
+
+def warp_cells(bgr: np.ndarray, homography: np.ndarray, px: int) -> np.ndarray:
+    """The board straightened to 15*px square, `px` pixels per cell."""
+    scale = np.diag([1.0 / px, 1.0 / px, 1.0])
+    return cv2.warpPerspective(
+        bgr, homography @ scale, (15 * px, 15 * px), flags=cv2.WARP_INVERSE_MAP | cv2.INTER_AREA
+    )
+
+
+def cell_medians(img: np.ndarray, px: int, margin: float = 0.18) -> np.ndarray:
+    """(15, 15, C) median of each cell's inner region."""
+    m = int(margin * px)
+    c = img.shape[2] if img.ndim == 3 else 1
+    cells = img.reshape(15, px, 15, px, c)[:, m : px - m, :, m : px - m]
+    return np.median(cells.transpose(0, 2, 1, 3, 4).reshape(15, 15, -1, c), axis=2)
+
+
+def cream_colour(colours: np.ndarray, mask: np.ndarray, radius: float = 10.0) -> np.ndarray:
+    """The typical colour of the squares in `mask`: the biggest cluster of similar colours.
+
+    `colours` is (15, 15, 3) in Lab, `mask` a (15, 15) bool. For the plain squares this is the
+    colour of an empty square in this picture, in whatever light; it works as long as most of
+    them are empty (they are, even late in a game)."""
+    pts = colours[mask]
+    d = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=2)
+    densest = int(np.argmax((d < radius).sum(axis=1)))
+    return np.median(pts[d[densest] < radius], axis=0)
+
+
+def plain_mask(cfg: BoardConfig) -> np.ndarray:
+    return np.array([[ch == "." for ch in row] for row in cfg.layout])
+
+
+def visible_mask(shape: tuple[int, ...], homography: np.ndarray) -> np.ndarray:
+    """(15, 15) mask of the squares whose centre lies inside the picture."""
+    h, w = shape[:2]
+    cols, rows = np.meshgrid(np.arange(15) + 0.5, np.arange(15) + 0.5)
+    pts = np.stack([cols.ravel(), rows.ravel()], axis=1).reshape(-1, 1, 2)
+    img = cv2.perspectiveTransform(pts, homography).reshape(-1, 2)
+    inside = (img[:, 0] >= 0) & (img[:, 0] < w) & (img[:, 1] >= 0) & (img[:, 1] < h)
+    return inside.reshape(15, 15)
+
+
+def cream_fraction(bgr: np.ndarray, homography: np.ndarray, cfg: BoardConfig) -> float:
+    """How much of the board's visible plain squares look like empty cream squares."""
+    lab = cv2.cvtColor(warp_cells(bgr, homography, CHECK_PX), cv2.COLOR_BGR2LAB).astype(np.float32)
+    col = cell_medians(lab, CHECK_PX)
+    plain = plain_mask(cfg) & visible_mask(bgr.shape, homography)
+    if plain.sum() < 20:
+        return 0.0
+    cream = cream_colour(col, plain)
+    return float((np.linalg.norm(col - cream, axis=2)[plain] < CREAM_DE).mean())
+
+
+def visible_fraction(shape: tuple[int, ...], homography: np.ndarray) -> float:
+    """Fraction of the squares whose centre lies inside the picture."""
+    return float(visible_mask(shape, homography).mean())
+
+
+def _homography(pitch: float, theta: float, t: np.ndarray) -> np.ndarray:
     cos, sin = np.cos(theta), np.sin(theta)
-    H = np.array(
+    return np.array(
         [[pitch * cos, -pitch * sin, t[0]], [pitch * sin, pitch * cos, t[1]], [0, 0, 1]],
         dtype=np.float64,
     )
-    # Refine: match each blob to the nearest layout cell of its colour, fit a homography, repeat.
+
+
+def _refine(
+    h0: np.ndarray, pitch: float, blobs: list[Blob], cells: dict[str, np.ndarray]
+) -> tuple[np.ndarray, int]:
+    """Fit a full homography to the blobs that sit on layout cells of their colour."""
     pts = {k: np.array([[b.x, b.y] for b in blobs if b.kind == k]) for k in cells}
-    matches = 0
+    H, matches = h0, 0
     for tol in (0.45, 0.35, 0.3):
         src, dst = [], []
         for k, layout in cells.items():
@@ -166,13 +228,118 @@ def find_board(bgr: np.ndarray, cfg: BoardConfig) -> BoardFit | None:
                     dst.append(p)
         if len(src) < 6:
             break
-        src_a, dst_a = np.float64(src), np.float64(dst)
-        H_new, inliers = cv2.findHomography(src_a, dst_a, cv2.RANSAC, 0.25 * pitch)
+        H_new, inliers = cv2.findHomography(
+            np.float64(src), np.float64(dst), cv2.RANSAC, 0.25 * pitch
+        )
         if H_new is None:
             break
         H = H_new
         matches = int(inliers.sum()) if inliers is not None else len(src)
-    if matches < 6:
-        return None
-    confidence = min(1.0, matches / max(10.0, 0.5 * expected))
-    return BoardFit(H, pitch, matches, expected, confidence)
+    return H, matches
+
+
+def _pitch_of(h: np.ndarray) -> float:
+    return float(np.hypot(h[0, 0], h[1, 0]))
+
+
+CREAM_BGR = np.array([222.0, 232.0, 240.0])  # an empty square in a neutrally lit picture
+SOLID_MATCHES = 12  # fewer bonus squares than this and a white-balanced second look is tried
+
+
+def white_balance(bgr: np.ndarray, quantile: float = 90.0) -> np.ndarray:
+    """Scale the channels so the brightest region (the lit screen) is neutral cream.
+
+    Under a warm lamp the cream squares fall in the orange hue range of the TW squares and the
+    bonus colours cannot be told apart; after this they can."""
+    v = bgr.max(axis=2)
+    bright = bgr[v >= np.percentile(v, quantile)]
+    cream = np.median(bright.reshape(-1, 3), axis=0)
+    gain = np.clip(CREAM_BGR / np.maximum(cream, 1.0), 0.5, 2.5)
+    return np.clip(bgr.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+
+
+def find_boards(
+    bgr: np.ndarray,
+    cfg: BoardConfig,
+    hints: tuple[np.ndarray, ...] = (),
+    top: int = 5,
+) -> list[BoardFit]:
+    """Candidate positions of the board, best first. Falls back to a white-balanced copy of the
+    picture when the first look finds no solid fit (a tinted picture)."""
+    fits = _find_boards(bgr, cfg, hints, top)
+    if fits and fits[0].matches >= SOLID_MATCHES:
+        return fits
+    balanced = _find_boards(white_balance(bgr), cfg, hints, top)
+    if balanced and (not fits or balanced[0].matches > fits[0].matches):
+        return balanced
+    return fits
+
+
+def _find_boards(
+    bgr: np.ndarray,
+    cfg: BoardConfig,
+    hints: tuple[np.ndarray, ...] = (),
+    top: int = 5,
+) -> list[BoardFit]:
+    """Candidate positions of the board, best first by votes weighted with cream-likeness.
+
+    Candidate scales come from a wide absolute range (a cell is between 1% and 5% of the
+    picture's long side). `hints` are homographies worth trying as they are, such as where the
+    board was in the previous picture of the same game."""
+    blobs = detect_bonus_blobs(bgr)
+    cells = _layout_cells(cfg)
+    expected = sum(len(v) for v in cells.values())
+    long_side = max(bgr.shape[:2])
+
+    seeds: list[tuple[int, float, float, np.ndarray]] = []
+    if len(blobs) >= 6:
+        coarse: list[tuple[int, float, float, np.ndarray]] = []
+        for pitch in np.geomspace(0.011, 0.05, 26) * long_side:
+            for theta in np.deg2rad((-8.0, 0.0, 8.0)):
+                n, t = _vote(blobs, cells, float(pitch), float(theta))
+                if n >= 5:
+                    coarse.append((n, float(pitch), float(theta), t))
+        coarse.sort(key=lambda c: -c[0])
+        for c in coarse:  # distinct scales only
+            if all(abs(c[1] - s_[1]) / s_[1] > 0.08 for s_ in seeds):
+                seeds.append(c)
+            if len(seeds) >= top:
+                break
+
+    found: list[tuple[float, BoardFit]] = []
+
+    def consider(h: np.ndarray, pitch: float, matches: int) -> None:
+        cream = cream_fraction(bgr, h, cfg)
+        confidence = min(1.0, matches / max(10.0, 0.5 * expected))
+        if cream < 0.1:
+            confidence *= 0.5
+        fit = BoardFit(
+            h, pitch, matches, expected, confidence, cream, visible_fraction(bgr.shape, h)
+        )
+        found.append((max(matches, 1) * (0.1 + cream), fit))
+
+    for n0, pitch0, theta0, t0 in seeds:
+        local = (n0, pitch0, theta0, t0)
+        for f in (0.96, 1.0, 1.04):
+            for dth in np.deg2rad((-3.0, 0.0, 3.0)):
+                n, t = _vote(blobs, cells, pitch0 * f, theta0 + float(dth))
+                if n > local[0]:
+                    local = (n, pitch0 * f, theta0 + float(dth), t)
+        n, pitch, theta, t = local
+        h, matches = _refine(_homography(pitch, theta, t), pitch, blobs, cells)
+        if matches >= 6:
+            consider(h, pitch, matches)
+    for hint in hints:
+        pitch = _pitch_of(hint)
+        if not 0.008 * long_side < pitch < 0.06 * long_side:
+            continue
+        h, matches = _refine(hint, pitch, blobs, cells) if len(blobs) >= 6 else (hint, 0)
+        consider(h if matches >= 6 else hint, pitch, matches)
+    found.sort(key=lambda f: -f[0])
+    return [f for _, f in found]
+
+
+def find_board(bgr: np.ndarray, cfg: BoardConfig) -> BoardFit | None:
+    """The board's most likely position in the picture, or None when no layout fits."""
+    fits = find_boards(bgr, cfg)
+    return fits[0] if fits else None

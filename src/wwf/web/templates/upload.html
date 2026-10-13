@@ -29,10 +29,15 @@
 {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
 {% if fixtures_mode %}
 <div class="notice fixture-banner">
-  <b>Collecting fixtures.</b> Every picture is saved to <code>{{ fixture_dir }}</code>
-  ({{ fixture_count }} so far). Take as many as you like, then label them on the
-  <a href="/fixtures">Fixtures page</a>.
+  {% if collect %}
+  <b>Collecting test pictures.</b> Every picture is saved to <code>{{ fixture_dir }}</code>
+  ({{ fixture_count }} so far) and the camera stays ready for the next one. Label them on the
+  <a href="/fixtures">Fixtures page</a>, or <a href="/">go back to playing</a>.
   {% if saved %}<p class="ok">Saved <code>{{ saved }}</code>. Take the next one.</p>{% endif %}
+  {% else %}
+  Pictures are also saved as test pictures ({{ fixture_count }} so far). To take many in a row
+  without starting games, <a href="/?collect=1">collect pictures only</a>.
+  {% endif %}
 </div>
 {% endif %}
 <div class="notice error" id="send-error" role="alert" hidden></div>
@@ -41,6 +46,7 @@
 <section class="card capture-card">
   <form id="camera-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
     <input type="hidden" name="source" value="photo">
+    {% if collect %}<input type="hidden" name="collect" value="1">{% endif %}
     <label class="button primary big camera-button" id="camera-button">
       <span aria-hidden="true">📷</span> Take a photo of the board
       <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
@@ -48,7 +54,7 @@
     <noscript><button type="submit">Read board</button></noscript>
   </form>
 
-  {% with stay=fixtures_mode %}{% include "_viewfinder.html" %}{% endwith %}
+  {% with stay=collect %}{% include "_viewfinder.html" %}{% endwith %}
 
   <p class="hint small">Get the whole phone screen in the frame, board and rack included. Some angle or glare is fine.</p>
   <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
@@ -58,6 +64,7 @@
 <section class="card secondary-card">
   <form id="file-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
     <input type="hidden" name="source" value="auto">
+    {% if collect %}<input type="hidden" name="collect" value="1">{% endif %}
     <label class="dropzone" id="dropzone">
       <input type="file" name="image" accept="image/*" class="file-hidden" required>
       <span class="dropzone-text">Or upload a screenshot<br><small>choose a file, or drop one here</small></span>
