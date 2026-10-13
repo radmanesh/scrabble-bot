@@ -11,6 +11,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
 main { max-width: 1100px; margin: 0 auto; padding: 12px 16px 48px; }
 h1 { font-size: 1.4rem; margin: 0.2rem 0 0.8rem; }
@@ -268,3 +269,50 @@ button.link.danger { color: var(--err); }
 .pv-tl { fill: var(--tl); opacity: .55; } .pv-dl { fill: var(--dl); opacity: .55; }
 .pv-ctr { fill: var(--ctr); opacity: .55; }
 @media (max-width: 380px) { .game-card { flex-direction: column; } .card-board { flex-basis: auto; width: 140px; } }
+
+/* game workspace: header link, action bar, move composer */
+.back-link { margin: 0 0 4px; font-size: 0.9rem; }
+.back-link a { text-decoration: none; }
+.action-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.action-bar .button { flex: 1 1 auto; text-align: center; }
+.composer { border-color: var(--accent); }
+.composer h2 { margin-top: 0; }
+.composer .small { margin: 0 0 10px; }
+.composer fieldset.direction { border: 0; padding: 0; margin: 0 0 10px; min-width: 0; }
+.direction legend { padding: 0; font-weight: 500; margin-bottom: 4px; }
+.direction-buttons { display: flex; gap: 8px; }
+.dir-btn { flex: 1; min-height: 44px; }
+.dir-btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+.dir-btn.active::before { content: "✓ "; }
+.blank-letters { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
+.blank-letters:empty { display: none; }
+.blank-letters button { min-height: 40px; min-width: 40px; padding: 4px 8px; font-weight: 700; }
+.blank-letters button[aria-pressed="true"] { font-style: italic; text-decoration: underline dotted; background: color-mix(in srgb, var(--tile) 55%, var(--card)); }
+.blank-letters button[aria-pressed="true"]::after { content: " blank"; font-weight: 500; font-size: 0.75rem; }
+.composer-status { margin: 4px 0; min-height: 1.6em; }
+.composer-status p { margin: 4px 0; }
+.legend .lg { display: inline-block; padding: 0 6px; border-radius: 4px; }
+.lg.proposed { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.lg.crossing { box-shadow: inset 0 -3px 0 var(--accent); }
+
+/* a previewed word on the board: dashed edge on new tiles, an underline on tiles it reuses */
+input.cell.proposed:disabled { opacity: 1; -webkit-text-fill-color: var(--tile-ink); background: var(--tile); outline: 3px dashed var(--accent); outline-offset: -3px; }
+input.cell.proposed:disabled:placeholder-shown { background: var(--card); }
+.cell.crossing { box-shadow: inset 0 -5px 0 var(--accent); }
+.cell.start-marker { outline: 3px solid var(--accent); outline-offset: -3px; }
+
+/* row and column numbers, matching the 1-based coordinates the forms use */
+.board-wrap { display: grid; grid-template-columns: 1.7em minmax(0, 560px); max-width: calc(560px + 1.7em); }
+.board-wrap .board { grid-column: 2; grid-row: 2; }
+.guide-cols { grid-column: 2; grid-row: 1; display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 2px; padding: 0 2px; }
+.guide-rows { grid-column: 1; grid-row: 2; display: grid; grid-template-rows: repeat(15, minmax(0, 1fr)); gap: 2px; padding: 2px 0; }
+.guide-cols span, .guide-rows span { display: flex; align-items: center; justify-content: center; font-size: 0.62rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* composing: the board and the move form beside each other, so the preview and the form are both
+   in view. Stacked on phones, with the form right under the board. */
+.workspace.composing { display: grid; gap: 0 16px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) {
+  .workspace.composing { grid-template-columns: minmax(0, 620px) minmax(0, 1fr); align-items: start; }
+  .workspace.composing .ws-panel { position: sticky; top: 64px; }
+  .workspace.composing .board-card { max-width: none; }
+}

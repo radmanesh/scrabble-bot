@@ -199,6 +199,108 @@ def apply_solver_move(game: Game, n: int) -> None:
     game.recognition = None
 
 
+@dataclass
+class TypedPreview:
+    """What a typed word would do, worked out without touching the game."""
+
+    cells: list[dict[str, Any]]  # every square the word covers: r, c (zero-based), letter, ...
+    entry_problems: list[str]  # the word can't be placed at all (off the board, a clash)
+    violations: list[str]  # it can be placed but breaks a rule
+    score: ScoreBreakdown | None
+    new_tiles: int
+
+    @property
+    def placeable(self) -> bool:
+        return not self.entry_problems
+
+    @property
+    def legal(self) -> bool:
+        return self.placeable and not self.violations
+
+    @property
+    def forceable(self) -> bool:
+        return (
+            self.placeable
+            and bool(self.violations)
+            and all(v.startswith(DICTIONARY_PREFIX) for v in self.violations)
+        )
+
+
+def preview_typed_move(
+    svc: Services, game: Game, word: str, row: int, col: int, direction: str
+) -> TypedPreview:
+    """Check a typed word (one-based row and column of its first letter) and score it.
+
+    Nothing is changed: this is what the composer shows before anything is recorded."""
+    _require_closed(game)
+    board = safe_board(svc, game.board)
+    if board is None:
+        raise MoveRejected(["unreadable_board"])
+    placements, problems = placements_for_word(board, word, row - 1, col - 1, Direction(direction))
+    word = word.strip()
+    dr, dc = Direction(direction).step
+    new = {(p.row, p.col) for p in placements}
+    mismatched = {
+        tuple(int(x) - 1 for x in p.split(":")[1].split(","))
+        for p in problems
+        if p.startswith("letter_mismatch:")
+    }
+    cells: list[dict[str, Any]] = []
+    if word.isascii() and word.isalpha():
+        for i, ch in enumerate(word):
+            r, c = row - 1 + i * dr, col - 1 + i * dc
+            if not board.in_bounds(r, c):
+                break
+            cells.append(
+                {
+                    "r": r,
+                    "c": c,
+                    "letter": ch.upper(),
+                    "blank": ch.islower(),
+                    "new": (r, c) in new,
+                    "conflict": (r, c) in mismatched,
+                }
+            )
+    if problems:
+        return TypedPreview(cells, problems, [], None, len(placements))
+    analysis = analyse(svc, board, placements, game.dictionary_id)
+    return TypedPreview(cells, [], analysis.violations, analysis.score, len(placements))
+
+
+def record_typed_move(
+    svc: Services,
+    game: Game,
+    player: Player,
+    word: str,
+    row: int,
+    col: int,
+    direction: str,
+    *,
+    force: bool = False,
+    expected_turn: int | None = None,
+) -> Turn:
+    """Place a typed word and confirm it as `player`'s move, as one step.
+
+    Either the whole move is recorded, as exactly one turn, or the game is left untouched.
+    `expected_turn` is the turn number the page was showing: if the game has moved on (a retried
+    request, a second tab) nothing is recorded."""
+    if expected_turn is not None and expected_turn != game.turn_number:
+        raise MoveRejected(["game_moved_on"])
+    preview = preview_typed_move(svc, game, word, row, col, direction)
+    if not preview.placeable:
+        raise MoveRejected(preview.entry_problems)
+    if not preview.legal and not (force and preview.forceable):
+        raise MoveRejected(preview.violations, forceable=preview.forceable)
+    kept = (game.board, game.rack, game.last_result, game.recognition)
+    try:
+        apply_typed_move(svc, game, player, word, row, col, direction)
+        return confirm_turn(svc, game, player, force=force)
+    except Exception:
+        game.board, game.rack, game.last_result, game.recognition = kept
+        _track_source(game, "grid")
+        raise
+
+
 def apply_typed_move(
     svc: Services, game: Game, player: Player, word: str, row: int, col: int, direction: str
 ) -> None:
@@ -407,4 +509,5 @@ def explain(problem: str, dictionary_label: str = "the word list") -> str:
         "turn_open": "Confirm or cancel the open turn first.",
         "unreadable_board": "Fix the unreadable tiles ('?') on the board first.",
         "no_tiles_placed": "No new tiles.",
+        "game_moved_on": "This game changed since the page was loaded. Nothing was recorded.",
     }.get(name, name)

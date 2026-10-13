@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from wwf.api import gameplay
 from wwf.api.app import run_blocking
@@ -53,6 +53,63 @@ def _save(request: Request, game: Game) -> None:
 
 def _selected(n: int, count: int) -> int:
     return min(max(n, 0), max(count - 1, 0))
+
+
+ACTIONS = ("find", "mine", "opponent")
+
+
+def _action_for(request: Request, game: Game) -> str:
+    """Which of the workspace's actions is showing: the one asked for with `?do=`, otherwise
+    the one the turn state points at. Only your own turn can find a best move."""
+    asked = request.query_params.get("do", "")
+    if asked == "find" and game.phase != "my_turn":
+        asked = ""
+    if asked in ACTIONS:
+        return asked
+    return "find" if game.phase == "my_turn" else "opponent"
+
+
+def _parse_word_form(
+    word: str, row: str, col: str, direction: str
+) -> tuple[tuple[int, int] | None, str | None]:
+    """The one-based start as numbers, or a sentence saying what is wrong with it."""
+    try:
+        r, c = int(row), int(col)
+        if direction not in ("across", "down") or not (
+            1 <= r <= BOARD_SIZE and 1 <= c <= BOARD_SIZE
+        ):
+            raise ValueError
+    except ValueError:
+        return None, f"Row and column must be numbers from 1 to {BOARD_SIZE}."
+    return (r, c), None
+
+
+def _preview_payload(
+    svc: Services, game: Game, word: str, start: tuple[int, int], direction: str
+) -> dict[str, Any]:
+    """A typed word as the composer shows it. Reads only: the game is not changed."""
+    label = svc.dictionaries.info(game.dictionary_id).label
+    try:
+        p = gameplay.preview_typed_move(svc, game, word, start[0], start[1], direction)
+    except MoveRejected as e:
+        problems = [gameplay.explain(x, label) for x in e.problems]
+        return {
+            "ok": False, "cells": [], "problems": problems, "legal": False, "forceable": False,
+            "points": None, "words": [], "bingo": 0, "tiles": 0, "start": [start[0], start[1]],
+        }  # fmt: skip
+    codes = p.entry_problems or p.violations
+    return {
+        "ok": p.legal or p.forceable,
+        "cells": p.cells,
+        "problems": [gameplay.explain(x, label) for x in codes],
+        "legal": p.legal,
+        "forceable": p.forceable,
+        "points": p.score.total if p.score else None,
+        "words": [{"word": w.word, "points": w.points} for w in p.score.words] if p.score else [],
+        "bingo": p.score.bingo_bonus if p.score else 0,
+        "tiles": p.new_tiles,
+        "start": [start[0], start[1]],
+    }
 
 
 def _solve_error(e: ApiError) -> str:
@@ -107,6 +164,8 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
     ctx.setdefault("errors", [])
     ctx.setdefault("form_values", {"word": "", "row": "", "col": "", "direction": "across"})
     ctx.setdefault("force_offer", False)
+    ctx.setdefault("composer_preview", None)
+    ctx.setdefault("do_action", _action_for(request, game))
     latest = game.latest_picture
     pictures = list(reversed(game.pictures[-RECENT_PICTURES:]))
     return _render(
@@ -317,6 +376,88 @@ def typed_word(
     except MoveRejected as e:
         return _page(request, game, 422, form_values=values,
                      errors=[gameplay.explain(p, label) for p in e.problems])  # fmt: skip
+    return _finish(request, game)
+
+
+@router.get("/game/{game_id}/compose/preview.json")
+def compose_preview_json(
+    request: Request,
+    game_id: str,
+    word: str = "",
+    row: str = "",
+    col: str = "",
+    direction: str = "across",
+) -> Response:
+    """What a typed word would do, for the composer's live preview. Changes nothing."""
+    game = get_services(request).games.get(game_id)
+    if game is None:
+        return JSONResponse({"ok": False, "problems": ["That game doesn't exist."]}, 404)
+    start, problem = _parse_word_form(word, row, col, direction)
+    if not word.strip() or start is None:
+        problems = [problem] if problem and (row or col) else []
+        return JSONResponse({"ok": False, "incomplete": True, "cells": [], "problems": problems})
+    return JSONResponse(_preview_payload(get_services(request), game, word, start, direction))
+
+
+@router.post("/game/{game_id}/compose/preview")
+def compose_preview(
+    request: Request,
+    game_id: str,
+    word: str = Form(""),
+    row: str = Form(""),
+    col: str = Form(""),
+    direction: str = Form("across"),
+    player: str = Form("opponent"),
+) -> Response:
+    """The same preview without JavaScript: the page comes back with the word drawn on the
+    board. Still nothing is changed."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    values = {"word": word, "row": row, "col": col, "direction": direction}
+    do = "mine" if player == "me" else "opponent"
+    start, problem = _parse_word_form(word, row, col, direction)
+    if start is None or not word.strip():
+        errors = [problem or "Type the word first."]
+        return _page(request, game, 422, form_values=values, errors=errors, do_action=do)
+    payload = _preview_payload(get_services(request), game, word, start, direction)
+    return _page(request, game, form_values=values, composer_preview=payload, do_action=do)
+
+
+@router.post("/game/{game_id}/compose/record")
+def compose_record(
+    request: Request,
+    game_id: str,
+    word: str = Form(""),
+    row: str = Form(""),
+    col: str = Form(""),
+    direction: str = Form("across"),
+    player: str = Form("opponent"),
+    force: str = Form(""),
+    turn: str = Form(""),
+) -> Response:
+    """Place a typed word and confirm it as one move for the player shown. All or nothing."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    svc = get_services(request)
+    who = "me" if player == "me" else "opponent"
+    values = {"word": word, "row": row, "col": col, "direction": direction}
+    do = "mine" if who == "me" else "opponent"
+    start, problem = _parse_word_form(word, row, col, direction)
+    if start is None:
+        return _page(request, game, 422, form_values=values, errors=[problem or ""], do_action=do)
+    label = svc.dictionaries.info(game.dictionary_id).label
+    try:
+        gameplay.record_typed_move(
+            svc, game, who, word, start[0], start[1], direction,
+            force=bool(force), expected_turn=int(turn) if turn.isdigit() else None,
+        )  # fmt: skip
+    except MoveRejected as e:
+        preview = _preview_payload(svc, game, word, start, direction)
+        errors = [gameplay.explain(p, label) for p in e.problems]
+        return _page(request, game, 422, form_values=values, composer_preview=preview,
+                     errors=errors, do_action=do)  # fmt: skip
     return _finish(request, game)
 
 

@@ -1,0 +1,79 @@
+{# Record a move by typing the word. Nothing is written until the record button: the word is
+   checked and drawn on the board first (app.js does that live; the Check button does it without
+   JavaScript). `do_action` says whose move this is. #}
+{% set who = "me" if do_action == "mine" else "opponent" %}
+{% set who_label = "your" if who == "me" else "the opponent's" %}
+{% set pv = composer_preview %}
+<section class="card composer" id="composer" data-game="{{ game.id }}" data-player="{{ who }}">
+  <h2>Record {{ "my" if who == "me" else "opponent's" }} move</h2>
+  <p class="small"><b>Recording {{ who_label }} move</b>, turn {{ game.turn_number }}.
+    {% if who == "me" %}The tiles you use come off your rack.{% else %}Your rack isn't changed.{% endif %}
+    {% if (game.phase == "my_turn") != (who == "me") %}
+    <span class="hint">It is {{ "the opponent's" if game.phase != "my_turn" else "your" }} turn in the
+      game; you are recording the other player's move.</span>
+    {% endif %}</p>
+  <form class="opp-type" action="/game/{{ game.id }}/compose/record" method="post" autocomplete="off" id="composer-form">
+    <input type="hidden" name="player" value="{{ who }}">
+    <input type="hidden" name="turn" value="{{ game.turn_number }}">
+    <input type="hidden" name="direction" value="{{ form_values.direction if form_values.direction == 'down' else 'across' }}" id="composer-direction">
+    <label for="composer-word">Word
+      <input id="composer-word" name="word" value="{{ form_values.word }}" required autocapitalize="characters"
+             spellcheck="false" placeholder="e.g. ZEAL" aria-describedby="composer-help">
+    </label>
+    <div class="blank-letters" id="blank-letters" aria-live="polite"></div>
+    <p class="hint small" id="composer-help">Write the whole word, including letters already on the
+      board it runs through. To use a blank tile for a letter, tap that letter below the word.</p>
+
+    <div class="opp-where">
+      <label for="composer-row">Row
+        <input id="composer-row" name="row" type="number" min="1" max="15" inputmode="numeric"
+               value="{{ form_values.row }}" required></label>
+      <label for="composer-col">Column
+        <input id="composer-col" name="col" type="number" min="1" max="15" inputmode="numeric"
+               value="{{ form_values.col }}" required></label>
+    </div>
+    <p class="hint small">Where the word's first letter goes, counted from 1 along the numbers at
+      the board's edge. You can also tap a square on the board to set the start.</p>
+
+    <fieldset class="direction">
+      <legend>Direction</legend>
+      <div class="direction-buttons">
+        {% set down = form_values.direction == "down" %}
+        <button type="button" class="dir-btn{% if not down %} active{% endif %}" data-direction="across"
+                aria-pressed="{{ 'false' if down else 'true' }}">→ Across</button>
+        <button type="button" class="dir-btn{% if down %} active{% endif %}" data-direction="down"
+                aria-pressed="{{ 'true' if down else 'false' }}">↓ Down</button>
+      </div>
+    </fieldset>
+
+    <div id="composer-status" class="composer-status" role="status" aria-live="polite">
+      {% if pv %}
+        {% if pv.problems %}
+        <ul class="problems">{% for p in pv.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+        {% endif %}
+        {% if pv.points is not none %}
+        <p><b>{{ pv.words[0].word if pv.words else form_values.word | upper }}</b> · <b>{{ pv.points }} points</b>
+          ({{ pv.tiles }} new tile{{ "s" if pv.tiles != 1 }}){% for w in pv.words %}{% if loop.first %}: {% endif %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}{% if pv.bingo %} + bingo {{ pv.bingo }}{% endif %}</p>
+        {% endif %}
+      {% else %}
+      <p class="hint small">Type the word and where it starts to see it on the board and its score.</p>
+      {% endif %}
+    </div>
+    <p class="legend small" aria-hidden="true">On the board: <span class="lg proposed">dashed</span> = tiles
+      this move adds · <span class="lg crossing">underlined</span> = tiles it uses that are already there.</p>
+
+    <label class="check" id="composer-force" {% if not (pv and pv.forceable) %}hidden{% endif %}>
+      <input type="checkbox" name="force" value="1"> The game accepted this word: record it even
+      though it's not in the word list</label>
+
+    <div class="actions">
+      <button type="submit" class="primary" id="composer-record">Record {{ "my" if who == "me" else "opponent's" }} move</button>
+      <button type="submit" formaction="/game/{{ game.id }}/compose/preview" formnovalidate id="composer-check">Check the word</button>
+      <button type="button" id="composer-cancel">Clear</button>
+    </div>
+  </form>
+  <form action="/game/{{ game.id }}/pass" method="post" class="actions small-actions">
+    <input type="hidden" name="who" value="{{ who }}">
+    <button type="submit" class="link">{{ "I pass this turn" if who == "me" else "The opponent passed" }}</button>
+  </form>
+</section>

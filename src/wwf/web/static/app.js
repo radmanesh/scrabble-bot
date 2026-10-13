@@ -206,7 +206,10 @@
     const oppRow = document.querySelector(".opp-type input[name=row]");
     const oppCol = document.querySelector(".opp-type input[name=col]");
     function pointOpponentAt(input) {
-      if (oppRow && oppCol) { oppRow.value = +input.dataset.r + 1; oppCol.value = +input.dataset.c + 1; }
+      if (oppRow && oppCol) {
+        oppRow.value = +input.dataset.r + 1; oppCol.value = +input.dataset.c + 1;
+        oppRow.dispatchEvent(new Event("input", { bubbles: true })); // refresh the live preview
+      }
     }
 
     cells.forEach((input) => {
@@ -285,6 +288,146 @@
     }
   }
 
+
+  // --- game page: the move composer ----------------------------------------------------------
+  // Types a word, chooses where it starts and which way, and draws it on the board with its score
+  // before anything is recorded. The preview only changes what the squares show: previewed tiles
+  // are disabled, so the board form never submits them, and Clear puts the squares back.
+  function initComposer() {
+    const form = document.getElementById("composer-form");
+    if (!form) return;
+    const game = document.getElementById("composer").dataset.game;
+    const word = document.getElementById("composer-word");
+    const row = document.getElementById("composer-row");
+    const col = document.getElementById("composer-col");
+    const dir = document.getElementById("composer-direction");
+    const status = document.getElementById("composer-status");
+    const force = document.getElementById("composer-force");
+    const letters = document.getElementById("blank-letters");
+    const board = document.querySelector("#board-form .board");
+    const cellAt = (r, c) => board && board.querySelector(`input.cell[data-r="${r}"][data-c="${c}"]`);
+    let touched = [];  // squares the preview has changed, with what they held
+    let timer = null, seq = 0;
+    // A word previewed by the server (no JavaScript) is already drawn; start from the plain board
+    // and let the live preview draw it again, so Clear can take it off.
+    if (board) {
+      board.querySelectorAll("input.cell.proposed:disabled").forEach((el) => {
+        el.value = ""; el.disabled = false; el.classList.remove("proposed", "blank");
+      });
+      board.querySelectorAll(".cell.crossing").forEach((el) => el.classList.remove("crossing"));
+    }
+
+    function clearOverlay() {
+      touched.forEach(({ el, value, wasDisabled }) => {
+        el.value = value; el.disabled = wasDisabled;
+        el.classList.remove("proposed", "crossing", "start-marker");
+        if (!value) el.classList.remove("blank");
+      });
+      touched = [];
+    }
+    function show(cells, start) {
+      clearOverlay();
+      cells.forEach((c) => {
+        const el = cellAt(c.r, c.c);
+        if (!el) return;
+        touched.push({ el, value: el.value, wasDisabled: el.disabled });
+        if (c.new) {
+          el.value = c.letter; el.disabled = true;
+          el.classList.add("proposed");
+          el.classList.toggle("blank", !!c.blank);
+        } else {
+          el.classList.add("crossing");
+        }
+      });
+      if (start) {
+        const el = cellAt(start[0] - 1, start[1] - 1);
+        if (el) { el.classList.add("start-marker"); if (!touched.some((t) => t.el === el)) touched.push({ el, value: el.value, wasDisabled: el.disabled }); }
+      }
+    }
+    function say(html) { status.innerHTML = html; }
+    const esc = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+
+    async function refresh() {
+      const mine = ++seq;
+      if (!word.value.trim() || !row.value || !col.value) {
+        clearOverlay(); force.hidden = true;
+        say('<p class="hint small">Type the word and where it starts to see it on the board and its score.</p>');
+        return;
+      }
+      const q = new URLSearchParams({ word: word.value, row: row.value, col: col.value, direction: dir.value });
+      let data;
+      try {
+        const res = await fetch(`/game/${game}/compose/preview.json?${q}`);
+        data = await res.json();
+      } catch (e) {
+        return;  // offline: the server still checks when it is recorded
+      }
+      if (mine !== seq) return;  // a newer request is on its way
+      show(data.cells || [], data.start);
+      const parts = [];
+      if (data.problems && data.problems.length) {
+        parts.push("<ul class=\"problems\">" + data.problems.map((p) => `<li>${esc(p)}</li>`).join("") + "</ul>");
+      }
+      if (data.points !== null && data.points !== undefined) {
+        const words = (data.words || []).map((w) => `${esc(w.word)} ${w.points}`).join(" + ");
+        parts.push(`<p><b>${data.points} points</b> (${data.tiles} new tile${data.tiles === 1 ? "" : "s"})` +
+          (words ? `: ${words}` : "") + (data.bingo ? ` + bingo ${data.bingo}` : "") + "</p>");
+      }
+      say(parts.join("") || "<p class=\"hint small\">Looks fine.</p>");
+      force.hidden = !data.forceable;
+    }
+    function later() { clearTimeout(timer); timer = setTimeout(refresh, 250); }
+
+    // Blank tiles are set with one button per letter of the word, not by typing lowercase by
+    // accident: typed letters are capitalised, and a letter keeps its blank flag only while it is
+    // still the same letter in the same place. The server still accepts lowercase as a blank.
+    let flags = [...word.value.trim()].map((ch) => ch !== ch.toUpperCase());
+    let prev = word.value.trim().toUpperCase();
+    function write() {
+      word.value = [...prev].map((ch, i) => (flags[i] ? ch.toLowerCase() : ch)).join("");
+    }
+    function drawLetters() {
+      letters.textContent = "";
+      [...prev].forEach((ch, i) => {
+        if (!/[A-Z]/.test(ch)) return;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = ch;
+        b.setAttribute("aria-pressed", String(!!flags[i]));
+        b.setAttribute("aria-label", `Letter ${i + 1}, ${ch}${flags[i] ? ", blank tile" : ""}: press to ${flags[i] ? "make it a normal tile" : "make it a blank"}`);
+        b.addEventListener("click", () => { flags[i] = !flags[i]; write(); drawLetters(); later(); });
+        letters.appendChild(b);
+      });
+    }
+    function typed() {
+      const next = word.value.trim().toUpperCase();
+      flags = [...next].map((ch, i) => (prev[i] === ch ? !!flags[i] : false));
+      prev = next;
+      write(); drawLetters(); later();
+    }
+
+    word.addEventListener("input", typed);
+    [row, col].forEach((el) => el.addEventListener("input", later));
+    form.querySelectorAll(".dir-btn").forEach((btn) => btn.addEventListener("click", () => {
+      dir.value = btn.dataset.direction;
+      form.querySelectorAll(".dir-btn").forEach((b) => {
+        b.classList.toggle("active", b === btn);
+        b.setAttribute("aria-pressed", String(b === btn));
+      });
+      later();
+    }));
+    document.getElementById("composer-cancel").addEventListener("click", () => {
+      clearOverlay();
+      word.value = ""; prev = ""; flags = []; row.value = ""; col.value = ""; force.hidden = true;
+      drawLetters();
+      say('<p class="hint small">Type the word and where it starts to see it on the board and its score.</p>');
+      word.focus();
+    });
+    // the server-rendered preview (no JavaScript) is already drawn: take it over cleanly
+    drawLetters();
+    if (word.value && row.value && col.value) refresh();
+  }
+
   // --- results page --------------------------------------------------------------------------
   function initResults() {
     const table = document.querySelector("table.moves");
@@ -337,6 +480,7 @@
     initViewfinder();
     initUpload();
     initReview();
+    initComposer();
     initResults();
     initOptions();
   });

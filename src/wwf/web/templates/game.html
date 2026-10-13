@@ -30,20 +30,25 @@
     {% include "_pending_card.html" %}
   {% endif %}
 
-  {% include "_board_form.html" %}
+  {% set composing = game.started and not open_tiles and do_action != "find" %}
+  <div class="workspace{% if composing %} composing{% endif %}">
+    <div class="ws-board">{% include "_board_form.html" %}</div>
+    {% if game.started and not open_tiles %}
+    <div class="ws-panel">
+      {% include "_action_bar.html" %}
+      {% if do_action == "find" %}{% include "_moves.html" %}
+      {% else %}{% include "_composer.html" %}{% endif %}
+    </div>
+    {% endif %}
+  </div>
 
-  {% if game.started and not open_tiles %}
-    {% if game.phase == "my_turn" %}{% include "_moves.html" %}{% endif %}
-    {% include "_enter_move.html" %}
-  {% endif %}
-
-  <section class="card pictures-card">
+  <section class="card pictures-card" id="pictures">
     {% include "_pictures.html" %}
   </section>
 
   {% include "_history.html" %}
 
-  {% if game.started and not open_tiles and game.phase == "my_turn" %}
+  {% if game.started and not open_tiles and game.phase == "my_turn" and do_action == "find" %}
   <div id="thumb-bar" class="thumb-bar">
     {% if result and result.moves %}{% include "_play_button.html" %}
     {% else %}<button type="submit" form="board-form" name="action" value="solve" class="primary big">Solve</button>{% endif %}
