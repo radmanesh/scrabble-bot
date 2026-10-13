@@ -45,13 +45,14 @@
       {% else %}{% include "_composer.html" %}{% endif %}
     </div>
     {% endif %}
+    <div class="ws-after">
+      <section class="card pictures-card" id="pictures">
+        <h2 class="sr-only">Pictures</h2>
+        {% include "_pictures.html" %}
+      </section>
+      {% include "_history.html" %}
+    </div>
   </div>
-
-  <section class="card pictures-card" id="pictures">
-    {% include "_pictures.html" %}
-  </section>
-
-  {% include "_history.html" %}
 
 </div>
 {% endblock %}

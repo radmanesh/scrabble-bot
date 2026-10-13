@@ -115,6 +115,23 @@ def _preview_payload(
 SHOWN_AT_FIRST = 5
 
 
+def _turn_rows(game: Game) -> list[dict[str, Any]]:
+    """The confirmed turns, newest first, with the score after each and a number that counts
+    only moves and passes: the starting position and board updates are setup, not turns."""
+    totals = {"me": 0, "opponent": 0}
+    rows, played = [], 0
+    for t in game.turns:
+        setup = t.kind == "start"
+        if not setup:
+            totals[t.player] += t.points
+            played += 1
+        rows.append({
+            "t": t, "setup": setup, "number": None if setup else played,
+            "me": totals["me"], "opponent": totals["opponent"],
+        })  # fmt: skip
+    return list(reversed(rows))
+
+
 def _suggestions_view(game: Game, selected: int) -> list[dict[str, Any]]:
     """The solver's moves as the page needs them: the tiles each one would put on the board, so
     choosing one can draw it without another request."""
@@ -227,6 +244,8 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         picture_count=len(game.pictures),
         has_quad=bool(latest and latest.quad),
         turns=list(reversed(game.turns)),
+        turn_rows=_turn_rows(game),
+        suspect_letters=set(bag.over) if bag is not None and bag.over else set(),
         open_player=game.open_player or game.player_to_move,
         **ctx,
     )
@@ -586,6 +605,38 @@ def picture_file(request: Request, game_id: str, picture_id: str) -> Response:
         raise ApiError(404, "picture_not_found", {"picture": picture_id})
     pic, data = found
     return Response(data, media_type=pic.content_type, headers={"Cache-Control": "private"})
+
+
+@router.get("/game/{game_id}/picture/{picture_id}/view", response_class=HTMLResponse)
+def picture_view(request: Request, game_id: str, picture_id: str, back: str = "") -> Response:
+    """A picture inside the app: the original or the straightened board, zoomable, with a way
+    back to where you came from."""
+    svc = get_services(request)
+    game = svc.games.get(game_id)
+    found = svc.picture(game, picture_id) if game is not None else None
+    if game is None or found is None:
+        return _render(
+            request, "error.html", 404, title="Picture not found",
+            message="That picture doesn't exist (its game may have been deleted).",
+        )  # fmt: skip
+    pic = found[0]
+    ids = [p.id for p in game.pictures]
+    i = ids.index(pic.id)
+    anchor = back if back in ("pictures", "turns") else "pictures"
+    return _render(
+        request,
+        "picture.html",
+        game=game,
+        pic=pic,
+        straightened=bool(pic.quad),
+        back=f"/game/{game.id}#{anchor}",
+        back_name=anchor,
+        previous_id=ids[i - 1] if i > 0 else None,
+        next_id=ids[i + 1] if i + 1 < len(ids) else None,
+        number=i + 1,
+        total=len(ids),
+        turn_word=next((t.word for t in game.turns if t.picture == pic.id), ""),
+    )
 
 
 @router.get("/game/{game_id}/picture/{picture_id}/board.png", response_class=Response)

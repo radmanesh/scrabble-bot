@@ -6,7 +6,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from tests.api.helpers import FakeReader, form, new_game, reading
+from tests.api.helpers import FakeReader, form, new_game, reading, send_picture
 from wwf.api.services import Services
 
 
@@ -509,3 +509,62 @@ def test_changing_settings_clears_stale_suggestions(client: TestClient, services
     assert services.game(gid).last_result is not None  # nothing changed, nothing dropped
     save(3)
     assert services.game(gid).last_result is None
+
+
+# --- history and pictures ---------------------------------------------------------------------
+
+
+def test_history_shows_setup_apart_from_turns_with_running_totals(
+    client: TestClient, services: Services
+) -> None:
+    gid = _started(client, "start_opponent")
+    moves = (("opponent", "HAT", "8", "6", "down"), ("me", "TO", "10", "6", "across"))
+    for who, word, row, col, direction in moves:
+        data = {"word": word, "row": row, "col": col, "direction": direction, "player": who,
+                "turn": str(services.game(gid).turn_number)}  # fmt: skip
+        assert client.post(f"/game/{gid}/compose/record", data=data).status_code in (200, 303)
+    game = services.game(gid)
+    assert len(game.turns) == 3
+    html = client.get(f"/game/{gid}").text
+    assert 'class="me setup"' in html and "Starting position" in html  # not a numbered turn
+    assert "Turn 1 · You 0, Opponent" in html and "Turn 2 · You" in html
+    assert html.index('id="turns"') > html.index('id="pictures"')
+
+
+def test_undo_says_exactly_what_it_will_reopen(client: TestClient) -> None:
+    gid = _started(client, "start_opponent")
+    client.post(f"/game/{gid}/compose/record",
+                data={"word": "HAT", "row": "8", "col": "6", "direction": "down",
+                      "player": "opponent", "turn": "2"})  # fmt: skip
+    html = client.get(f"/game/{gid}").text
+    assert "Takes back the opponent&#39;s <b>HAT</b>" in html
+    assert "Cancel this turn" in html  # the difference from discarding an unconfirmed draft
+
+
+def test_pictures_open_in_the_viewer_with_a_way_back(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = new_game(client)
+    reader.next = reading({7: (5, "HELLO")}, "SATIRE?")
+    send_picture(client, gid)
+    pic = services.game(gid).pictures[0]
+    page = client.get(f"/game/{gid}").text
+    assert f"/game/{gid}/picture/{pic.id}/view?back=pictures" in page
+    view = client.get(f"/game/{gid}/picture/{pic.id}/view?back=turns")
+    assert view.status_code == 200
+    assert "Picture 1 of 1" in view.text and "Original" in view.text
+    assert f'href="/game/{gid}#turns"' in view.text
+    assert f"/game/{gid}/picture/{pic.id}" in view.text  # the raw file stays available
+    assert client.get(f"/game/{gid}/picture/nope/view").status_code == 404
+
+
+def test_tile_count_warnings_mark_the_squares_without_changing_them(
+    client: TestClient, services: Services
+) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "ZZ")}, "AB", "start_me"))
+    before = services.game(gid).board
+    html = client.get(f"/game/{gid}").text
+    assert html.count("suspect") >= 2 and "may be one tile too many" in html
+    assert "Nothing was changed for you" in html
+    assert services.game(gid).board == before

@@ -1,29 +1,42 @@
-<section class="card history">
+<section class="card history" id="turns">
   <h2>Turns</h2>
-  {% if turns %}
+  {% if turn_rows %}
   <ol class="turn-log">
-    {% for t in turns %}
-    <li class="{{ t.player }}">
-      <span class="who">{{ "—" if t.kind == "start" else "You" if t.player == "me" else "Opponent" }}</span>
-      {% if t.kind == "pass" %}
-      <span>passed</span>
-      {% elif t.kind == "start" %}
+    {% for row in turn_rows %}{% set t = row.t %}
+    <li id="turn-{{ t.n }}" class="{{ t.player }}{% if row.setup %} setup{% endif %}">
+      {% if row.setup %}
+      <span class="who setup-tag">Setup</span>
       <span>{{ "Starting position" if t.n == 1 else "Board updated" }} · {{ t.tiles }} tile{{ "s" if t.tiles != 1 }}</span>
       {% else %}
-      <b>{{ t.word }}</b> {{ "→" if t.direction == "across" else "↓" }}
+      <span class="who">{{ "You" if t.player == "me" else "Opponent" }}</span>
+      {% if t.kind == "pass" %}
+      <span>passed</span>
+      {% else %}
+      <b>{{ t.word }}</b> <span aria-hidden="true">{{ "→" if t.direction == "across" else "↓" }}</span><span class="sr-only">{{ t.direction }}</span>
       <span class="pts">{{ t.points }}</span>
       <span class="small hint">
         {% for w in t.words %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}{% if t.bingo %} + bingo {{ t.bingo }}{% endif %}
       </span>
       {% if t.forced %}<span class="badge" title="Not in the word list, but the game accepted it">not in list</span>{% endif %}
       {% endif %}
-      {% if t.picture %}<a class="turn-thumb" href="/game/{{ game.id }}/picture/{{ t.picture }}" target="_blank" rel="noopener" title="The picture this turn came from"><img src="/game/{{ game.id }}/picture/{{ t.picture }}" alt="Picture for turn {{ t.n }}" loading="lazy"></a>{% endif %}
+      <span class="small hint totals">Turn {{ row.number }} · You {{ row.me }}, Opponent {{ row.opponent }}</span>
+      {% endif %}
+      {% if t.picture %}<a class="turn-thumb" href="/game/{{ game.id }}/picture/{{ t.picture }}/view?back=turns" title="The picture this turn came from"><img src="/game/{{ game.id }}/picture/{{ t.picture }}" alt="Picture for {{ 'this setup' if row.setup else 'turn ' ~ row.number }}" loading="lazy"></a>{% endif %}
     </li>
     {% endfor %}
   </ol>
-  <form action="/game/{{ game.id }}/undo" method="post" class="actions">
-    <button type="submit">Undo last turn</button>
-    <span class="hint small">Reopens it so you can fix it.</span>
+  {% set last = turn_rows[0] %}
+  <form action="/game/{{ game.id }}/undo" method="post" class="actions undo">
+    <button type="submit">Undo the last turn</button>
+    <span class="hint small">
+      {% if last.setup %}Reopens {{ "the starting position" if last.t.n == 1 else "the last board update" }}
+      so you can fix it.
+      {% elif last.t.kind == "pass" %}Takes back {{ "your" if last.t.player == "me" else "the opponent's" }} pass.
+      {% else %}Takes back {{ "your" if last.t.player == "me" else "the opponent's" }} <b>{{ last.t.word }}</b>
+      ({{ last.t.points }} points): its tiles come off the score and go back on the board as an
+      unconfirmed turn you can fix.{% endif %}
+      To throw away tiles that were never confirmed, use <b>Cancel this turn</b> instead.
+    </span>
   </form>
   {% else %}
   <p class="hint">Confirmed turns are listed here, locked, with their scores and the picture each came from.</p>
@@ -36,11 +49,11 @@
       {% for letter, n in bag.unseen.items() %}<span class="chip">{{ letter }}{% if n > 1 %}<sup>×{{ n }}</sup>{% endif %}</span>{% endfor %}
     </p>
     <p class="hint small">Everything not on the board or your rack. A blank that was played
-      looks like a normal tile in a picture, so mark it lowercase to keep this count right.</p>
+      looks like a normal tile in a picture, so mark it as a blank to keep this count right.</p>
   </details>
   {% endif %}
 
-  <form action="/game/{{ game.id }}/delete" method="post" class="danger-zone" data-confirm="Delete this game and its history?">
+  <form action="/game/{{ game.id }}/delete" method="post" class="danger-zone" data-confirm="Delete “{{ game.name }}” with its history and pictures? This can't be undone.">
     <button type="submit" class="link">Delete this game</button>
   </form>
 </section>

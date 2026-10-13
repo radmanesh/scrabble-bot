@@ -27,10 +27,10 @@
 {% if pictures %}
 <div class="pic-strip">
   {% for p in pictures %}
-  <a class="pic" href="/game/{{ game.id }}/picture/{{ p.id }}" target="_blank" rel="noopener">
-    <img src="/game/{{ game.id }}/picture/{{ p.id }}" alt="Picture {{ p.id }}" loading="lazy">
+  <a class="pic" href="/game/{{ game.id }}/picture/{{ p.id }}/view?back=pictures">
+    <img src="/game/{{ game.id }}/picture/{{ p.id }}" alt="Picture from turn {{ p.turn_n }}, open it in the viewer" loading="lazy">
     <span class="small">Turn {{ p.turn_n }} · {{ "uploaded" if p.source == "upload" else "photo" }}
-      {% if p.label_board %}· <span class="ok">learned</span>{% endif %}</span>
+      {% if p.label_board %}· <span class="ok">Confirmed; used to improve recognition</span>{% endif %}</span>
   </a>
   {% endfor %}
 </div>

@@ -314,7 +314,8 @@ input.cell.proposed:disabled:placeholder-shown { background: var(--card); }
 .workspace { display: grid; gap: 0 16px; grid-template-columns: minmax(0, 1fr); }
 .workspace.has-panel .ws-bar { order: 0; }
 @media (min-width: 900px) {
-  .workspace.has-panel { grid-template-columns: minmax(0, 620px) minmax(0, 1fr); grid-template-areas: "board bar" "board panel"; align-items: start; }
+  .workspace.has-panel { grid-template-columns: minmax(0, 620px) minmax(0, 1fr); grid-template-areas: "board bar" "board panel" "board after"; align-items: start; }
+  .workspace.has-panel .ws-after { grid-area: after; }
   .workspace.has-panel .ws-board { grid-area: board; }
   .workspace.has-panel .ws-bar { grid-area: bar; }
   .workspace.has-panel .ws-panel { grid-area: panel; }
@@ -369,3 +370,24 @@ a:focus-visible, button:focus-visible, summary:focus-visible, select:focus-visib
 fieldset.plain { border: 0; padding: 0; margin: 8px 0 0; min-width: 0; }
 .everyday { display: grid; gap: 14px; }
 .advanced .solver:not(:has(input[type=radio]:checked)) .params { display: none; }
+
+/* picture viewer and turn log */
+.viewer-choice { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.viewer-choice > input[type=radio], .viewer-zoom-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.viewer-choice > label:not(.button) { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-height: 44px; cursor: pointer; }
+.viewer-choice > input[type=radio]:checked + label { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+.viewer-choice > input:focus-visible + label { outline: 3px solid var(--accent); outline-offset: 2px; }
+.viewer-frame { flex: 1 1 100%; margin-top: 8px; overflow: auto; max-height: 78vh; border-radius: 8px; }
+.viewer-frame .shot { display: block; width: 100%; height: auto; }
+.viewer-frame .shot.straight { display: none; }
+#which-straight:checked ~ .viewer-frame .original { display: none; }
+#which-straight:checked ~ .viewer-frame .straight { display: block; }
+.viewer-zoom-toggle:checked ~ .viewer-frame .shot { width: 220%; max-width: none; }
+.viewer-zoom-toggle:checked + label { background: var(--accent); color: var(--accent-ink); }
+.turn-log li.setup { border-style: dashed; border-left-width: 1px; background: color-mix(in srgb, var(--line) 25%, transparent); }
+.setup-tag { text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.04em; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; }
+.turn-log .totals { margin-left: auto; }
+.undo { align-items: flex-start; }
+.undo .hint { flex: 1 1 14rem; }
+.cell.suspect { outline: 2px dotted var(--review); outline-offset: -2px; }
+.ws-after { margin-top: 0; }
