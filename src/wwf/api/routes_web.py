@@ -126,29 +126,37 @@ def home(request: Request) -> HTMLResponse:
     )
 
 
-def _preview_rows(g: Game) -> tuple[list[str], int, int]:
-    """The saved board for a thumbnail: 15 strings of "." empty, "c" confirmed tile, "d" tile of
-    the open turn that isn't confirmed yet. It is the board, not the latest picture, and never a
-    suggestion: a suggestion is only ever drawn when you choose it on the game page."""
-    rows, confirmed, draft = [], 0, 0
+def _preview_rows(g: Game) -> tuple[list[str], list[str], int, int]:
+    """The saved board for a thumbnail, as two lists of 15 strings.
+
+    `letters` holds what is on each square ("." empty; lowercase is a blank tile) and `state`
+    says which tiles are confirmed ("c") and which belong to the open turn and aren't confirmed
+    yet ("d"). It is the board, not the latest picture, and never a suggestion: a suggestion is
+    only drawn when you choose it on the game page."""
+    letters, state, confirmed, draft = [], [], 0, 0
     for r in range(BOARD_SIZE):
-        row = []
+        row, marks = [], []
         for c in range(BOARD_SIZE):
-            if g.board[r][c] is None:
+            v = g.board[r][c]
+            if v is None:
                 row.append(".")
+                marks.append(".")
             elif g.base_board[r][c] is not None:
-                row.append("c")
+                row.append(v)
+                marks.append("c")
                 confirmed += 1
             else:
-                row.append("d")
+                row.append(v)
+                marks.append("d")
                 draft += 1
-        rows.append("".join(row))
-    return rows, confirmed, draft
+        letters.append("".join(row))
+        state.append("".join(marks))
+    return letters, state, confirmed, draft
 
 
 def _game_summary(g: Game) -> dict[str, Any]:
     scores = g.scores()
-    rows, confirmed, draft = _preview_rows(g)
+    letters, state, confirmed, draft = _preview_rows(g)
     if not g.started:
         status = "Setting up"
     else:
@@ -167,7 +175,8 @@ def _game_summary(g: Game) -> dict[str, Any]:
         "turns": sum(1 for t in g.turns if t.kind != "start"),
         "pictures": len(g.pictures),
         "updated": g.updated_at.replace("T", " ")[:16],
-        "preview": rows,
+        "preview": state,
+        "letters": letters,
         "summary": f"Board with {tiles}." if confirmed + draft else "Empty board.",
     }
 

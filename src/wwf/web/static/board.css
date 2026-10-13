@@ -246,9 +246,9 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .new-game-panel { margin-top: 12px; }
 .game-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: 1fr; }
 @media (min-width: 720px) { .game-cards { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1040px) { .game-cards { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1500px) { .game-cards { grid-template-columns: repeat(3, 1fr); } }
 .game-card { display: flex; gap: 14px; margin: 0; align-items: flex-start; }
-.card-board { flex: 0 0 112px; }
+.card-board { flex: 0 0 168px; }
 .card-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .card-body p { margin: 0; }
 .game-name { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
@@ -268,7 +268,6 @@ button.link.danger { color: var(--err); }
 .pv-tw { fill: var(--tw); opacity: .55; } .pv-dw { fill: var(--dw); opacity: .55; }
 .pv-tl { fill: var(--tl); opacity: .55; } .pv-dl { fill: var(--dl); opacity: .55; }
 .pv-ctr { fill: var(--ctr); opacity: .55; }
-@media (max-width: 380px) { .game-card { flex-direction: column; } .card-board { flex-basis: auto; width: 140px; } }
 
 /* game workspace: header link, action bar, move composer */
 .back-link { margin: 0 0 4px; font-size: 0.9rem; }
@@ -416,3 +415,14 @@ select { max-width: 100%; }
 .param select, .param input { width: 100%; max-width: 100%; }
 .card-menu-body input { max-width: 100%; min-width: 0; }
 .inline-form { flex-wrap: wrap; }
+
+/* thumbnail letters */
+.pv-letter { font: 700 .66px system-ui, -apple-system, "Segoe UI", sans-serif; text-anchor: middle; fill: var(--tile-ink); pointer-events: none; }
+.pv-draft-letter { fill: var(--accent); }
+.pv-blank-letter { font-style: italic; }
+.pv-tile.pv-blank { fill: color-mix(in srgb, var(--tile) 55%, var(--card)); }
+.board-preview { aspect-ratio: 1 / 1; }
+@media (max-width: 560px) {
+  .game-card { flex-direction: column; }
+  .card-board { flex-basis: auto; width: min(100%, 300px); }
+}

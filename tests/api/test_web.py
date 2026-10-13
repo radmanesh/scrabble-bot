@@ -161,6 +161,8 @@ def test_home_shows_each_game_as_a_card_with_its_saved_board(
     assert "Continue game" in html and "Your turn" in html
     assert "You <b>0</b>" in html and "Opponent <b>0</b>" in html
     assert 'class="board-preview"' in html and "5 confirmed tiles" in html
+    for letter in "HELLO":  # the thumbnail shows the letters, not just blocks
+        assert f'class="pv-letter">{letter}</text>' in html
     # one image for assistive technology, not a tab stop or element per square
     assert html.count('role="img"') == 1
     assert html.index("New game") < html.index('class="game-cards"')  # beside the title
