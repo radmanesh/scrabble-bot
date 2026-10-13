@@ -4,7 +4,7 @@
   <p class="small">
     <b>{{ solver_name }}</b> · {{ result.elapsed_ms }} ms · {{ result.dictionary_id }} · rack
     <span class="kbd">{{ game.rack or "—" }}</span>
-    · <a href="/options?session={{ game.id }}">Options</a>
+    · <a href="/options?game={{ game.id }}">Options</a>
   </p>
   <details class="small">
     <summary>Parameters and stats</summary>

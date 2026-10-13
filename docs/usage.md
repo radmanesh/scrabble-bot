@@ -1,6 +1,6 @@
 # WWF Solver: usage guide
 
-This guide covers everything you can run and use today: the web app, the HTTP API, the Python
+This guide covers everything you can run and use today: the web app, the Python
 library (board and move model, scoring and rule checks, solvers, dictionaries), configuration,
 tests, and how to extend it.
 
@@ -13,8 +13,7 @@ The project is built in milestones (see the build spec).
 | Core model: board, rack, moves, scoring, rule validation | Done (M1) |
 | Dictionary loading, caching and choosing between word lists | Done |
 | Solvers: `anchor_trie` ("Smart brute force") and `dummy_random` (demo) | Done (M2) |
-| HTTP API (`wwf.api`) | Done (M5) |
-| Web pages: home, game (board, moves, opponent, history), options | Done (M6), not yet tried on a real phone |
+| Web pages: home, game (board, moves, typed moves, pictures, history), options | Done (M6), not yet tried on a real phone |
 | Multi-turn games: play, opponent's move, undo, scores, unseen tiles, saved to disk | Done |
 | Board reader (`wwf.vision`): finds the board in a photo and reads squares and rack | First version, trained on your labelled photos |
 | Docker image | Not built (M7) |
@@ -56,86 +55,83 @@ dictionary is built and cached.
 | `--port 8080` | Use another port |
 | `--reload` | Restart automatically when code changes (development) |
 
-Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't survive a restart.
+Stop it with Ctrl+C. Games are saved to disk after every action, so nothing is lost.
 
 ### Playing a game
 
-A game is one page, `/game/<id>`, and it follows the turn loop of a real match:
+A game is one page, `/game/<id>`. Pictures, typed words and the solver's suggestions all feed the
+same thing: an **open turn**, which stays editable until you **confirm** it.
 
 ```text
- your turn:      check the board, press Solve, pick a move, press Play
- opponent's turn: bring the board up to date (picture or typed word), confirm their move
- your turn again: say which tiles you drew, Solve, ...
+ set up:       picture or typing -> fix any square -> Confirm starting position (locks it)
+ each turn:    put tiles on the board (suggestion / typed word / picture)
+               -> fix anything that's wrong -> Confirm turn (locks it)
 ```
 
-**Home (`/`)** lists your saved games, newest first, each with whose turn it is, the score and
-the number of turns; tap one to carry on, or **Delete** it. Below that, start a new game:
+**Home (`/`)** lists your games, newest first, with whose turn it is, the score and how many
+pictures each has; tap one to carry on, or **Delete** it. Start a new game by:
 
-- **Take a photo of the board** is the main way:
-  - On a phone it opens the camera app directly.
-  - On a computer with a webcam it shows a live viewfinder; press **Capture**. Browsers only
-    allow the webcam on `localhost` or `https`; elsewhere the button opens a file picker.
-- **Or upload a screenshot**: choose an existing image, or drop one onto the box.
+- **Take a photo of the board**, the main way. On a phone it opens the camera app; on a computer
+  with a webcam it shows a live viewfinder (browsers only allow the webcam on `localhost` or
+  `https`; elsewhere it opens a file picker).
+- **Upload a screenshot**: choose an existing image, or drop one onto the box.
 - **Type a board in by hand**: start from an empty board.
 
 A picture is sent as soon as it's taken or chosen. The browser first scales it to at most 2000 px
 on the long side, which keeps phone photos small and converts iPhone HEIC photos to JPEG.
 
-**The game page** shows, from the top:
+**The starting position.** A new game isn't tracked yet. The board is read from the picture (or
+typed) and every square is editable. Check it against your phone, then press **Confirm · it's my
+turn** or **Confirm · it's their turn**. That locks the position as the first entry in *Turns*.
+It isn't checked for legality: it's whatever your phone shows.
 
-1. **The scoreboard**: your points, the opponent's, and how many tiles are left in the bag. A
-   three-step strip shows where the turn is: *Solve*, *Play a move*, *Opponent*. Points count
-   only the turns logged here, so a game you started tracking midway starts from zero.
-2. **What this turn needs**, which changes with the turn:
-   - *What did you draw?* appears on your turn when your rack isn't full. It shows the tiles you
-     kept, and you type the new ones (`?` for a blank). **Add and solve** goes straight on.
-   - *Opponent's turn* (after you play) has two ways to bring the board up to date, below.
-   - *New tiles on the board* appears on your turn if tiles show up that you didn't log.
-3. **The board**: an editable 15x15 grid. Click or tap a square and type.
-   - Typing a letter fills the square and moves right; arrow keys move; Backspace clears.
-   - A **lowercase** letter marks a blank tile. On a phone, type the letter then press **Blank**.
-   - The last move's tiles have a blue edge; amber squares are ones the reader isn't sure of.
-   - Your rack is below the grid, with `?` for a blank.
-   - **Save and solve** saves the board and finds moves. **Save** only saves.
-4. **Best moves**: the ranked list with score, start square (row, column, counting from 1),
-   direction and what you'd keep. Tap one to see the board after it, with each word's points.
-   **Play** (a big button, always in reach at the bottom of a phone) makes that move.
-5. **Update from a picture**, and **Turns**: every logged turn with its words and points, an
-   **Undo last turn** button, the tiles you can't see, and **Delete this game**.
+**Locked and open tiles.** From then on, tiles from confirmed turns are locked: grey, and not
+editable (the server ignores any change to them too). Tiles of the open turn have a green edge and
+can be changed freely. Locked tiles can only be fixed with **Undo last turn**, which reopens the
+last confirmed turn so you can edit it and confirm again. Your **rack is always editable**.
 
-**Playing your move.** **Play** puts the move on the board, takes the tiles off your rack, adds
-the points, and hands the turn to the opponent. It also records where *blanks* went, which a
-picture can never show. Then play the same move on your phone.
+**The game page**, from the top:
 
-**The opponent's move**, either way:
+1. **Scoreboard and turn**: your points, the opponent's, the tiles left in the bag, and a line
+   saying whose move is next. Points count turns confirmed here.
+2. **What this turn needs**:
+   - *Starting position* (before the game is tracked): the two **Confirm** buttons.
+   - *What did you draw?* on your turn when your rack isn't full. **Add and solve** goes on.
+   - The **open turn card**, once there are new tiles: the word, where it starts, its score, and
+     problems if it isn't one legal move. Buttons: **Confirm your move** (or **opponent's**),
+     **It was the other player's move**, **Cancel this turn** (board and rack go back to how the
+     turn began) and **Just update the board**, which keeps the tiles without scoring them (a
+     picture that caught up several turns; it shows in *Turns* as *Board updated*).
+3. **The board**: type into the squares. A letter fills the square and moves right; arrows move;
+   Backspace clears; **lowercase** marks a blank (on a phone, press **Blank**). Amber squares
+   are ones the reader isn't sure of. **Save** keeps your edits; **Save and solve** finds moves.
+4. **Best moves** (your turn): the ranked list. Tap one to preview it. **Play** puts it on the
+   board as the open turn and your rack becomes what you'd keep; nothing is logged until you
+   confirm, so you can still tweak it (say you played something slightly different).
+5. **Type a move**: a word, the row and column of its first letter (clicking a square fills them
+   in), across or down, and whose move it is. Write the whole word, including letters already on
+   the board; lowercase marks a blank. It goes on the board as the open turn. Use it for your own
+   move or the opponent's. If only the word list disagrees you're offered *confirm it even so*,
+   because the game itself accepted it; such turns are marked *not in list*.
+6. **Pictures**: **Take a picture** / **Upload instead**. Confirmed tiles are kept; new tiles
+   and your rack are read into the open turn (replacing any open tiles from an earlier picture).
+   The last four pictures of this game are shown under it.
+7. **Turns**: every confirmed turn with its words and points, the picture it came from, **Undo
+   last turn**, the unseen tiles, and **Delete this game**.
 
-- **Take a picture** (or upload one). Tiles already on the board are kept as they are, including
-  corrections you typed but didn't save, because tiles never leave a WWF board. Only the empty
-  squares are read, which is where their new tiles are. A card then says *Opponent's move found*:
-  the word, where it starts, and its score. Press **Log opponent's move**. If the new tiles
-  don't form one legal move (a tile was probably misread), the card says why and the squares to
-  check are outlined; correct them in the grid, press **Save**, and the card updates.
-- **Type their word**: the word, and the row and column of its first letter (clicking a square
-  on the board fills those in), and across or down. Write the whole word, including letters
-  already on the board; lowercase marks a blank. It's checked against the rules and the word
-  list first, and nothing is logged if a letter doesn't match or the word doesn't touch the
-  board. If only the word list disagrees, you're offered **log it even so**, because the game
-  itself accepted it. Such turns are marked *not in list*.
-- **They passed** logs a pass.
+A turn is either a suggestion you played, a typed word, or a picture. Only one is open at a time:
+confirm or cancel it before putting another on the board. A picture's new tiles must form one
+legal move to confirm; if they don't, correct the outlined squares, or use **Just update the
+board**.
 
-**Mistakes.** **Undo last turn** puts back the board, your rack, the turn and the score exactly
-as they were before it, including after a typed or photographed opponent move. It can be pressed
-repeatedly.
+**Unseen tiles.** Everything not on the board or your rack: the opponent's rack plus the bag. If
+the board shows more of a letter than the game has, the page says so, because one of them is a
+blank that looks like a normal tile; type it in lowercase and the count comes right.
 
-**Unseen tiles.** The list under *Turns* is everything not on the board or your rack: the
-opponent's rack plus the bag. If the board shows more of a letter than the game has, the page
-says so, because one of them is a blank that looks like a normal tile; type it in lowercase and
-the count comes right.
-
-**Saving.** Every game is a file in `data/games/` (one JSON file, plus its latest picture), so it
-survives restarting the server and a game can last weeks. Move the folder, or set
-`WWF_GAMES_DIR`, to keep games elsewhere. The earlier Review and Results addresses
-(`/review/<id>`, `/results/<id>`) now go to the game page.
+**Saving.** Every game is `data/games/<id>.json` plus a folder `data/games/<id>/` holding all its
+pictures. Games survive restarting the server and can last weeks. Set `WWF_GAMES_DIR` to keep
+them elsewhere. A game saved by an earlier version keeps its one picture, and a game that had
+turns but no confirmed starting position asks you to confirm it.
 
 **Options (`/options`)**: choose the solver, its parameters and the word list. Saving applies
 them to the game you came from (if any) and remembers them in a cookie for new games.
@@ -148,85 +144,20 @@ Everything works without JavaScript except:
 
 Without JavaScript, pick the picture and press the button that appears under it.
 
-## Collecting test pictures (fixtures)
+## Pictures and how the reader learns
 
-The board reader is built and tested against real pictures with known answers. Each of these
-"fixtures" is an image plus a JSON label holding the true board and rack.
+There is no separate "collect" mode or labelling page any more: **every picture belongs to a
+game**, and fixing the board on the game page *is* the label.
 
-```sh
-uv run wwf-serve --collect-fixtures
-```
-
-With that flag, **every picture you take while playing is also kept** in `assets/fixtures/`
-(with the reader's guess as a draft label), so playing builds the data set. Nothing about
-playing changes: the camera starts a game as usual.
-
-To take **many pictures in a row** without starting games, open <http://127.0.0.1:8000/?collect=1>
-(there's a link on the home page). The camera stays open between shots, and each picture is
-saved and not turned into a game.
-
-1. **Take pictures.**
-   - **Mac webcam (the game on your phone):** open the app on the Mac, click **Take a photo**,
-     and hold the phone up to the webcam. Press **space** (or **Capture**), or **In 3 s** for a
-     countdown. The preview is mirrored like a selfie camera; saved pictures are not.
-   - **Another device's camera:** start with `--host 0.0.0.0` and open
-     `http://<your computer's IP>:8000` on it. Its camera app opens for each picture.
-   - Camera pictures are named `photo-<date>-<time>.jpg`. Uploaded PNGs count as screenshots
-     (`screenshot-...png`); other uploads count as photos.
-2. **Label them.** Open **Fixtures** in the top bar (`/fixtures`).
-   - Each picture is **checked**, **draft: check it** (the reader's guess, nobody has confirmed
-     it) or **needs a label**. A warning shows when a label disagrees with its picture.
-   - **Label** (or **Check draft** / **Edit label**) opens a page that is only for labelling.
-     The picture's straightened board is shown beside the grid. Type exactly what the picture
-     shows, and the rack, then **Save label**.
-   - Squares of the label that the picture contradicts are outlined in red, with a note.
-     That is nearly always a tile typed in from a later turn.
-   - **Play from this picture** (on the Fixtures page, and on the labelling page) starts a real
-     saved game from that picture and its label. Play there, not in the label.
-3. **Prune.** Delete any picture you don't want straight from the folder.
-
-**Labels are the reader's lessons, so keep them true to the picture.** The Label page is not a
-game: nothing you type there should be a tile that isn't visible in that picture. To find labels
-that slipped:
-
-```sh
-uv run python -m wwf.vision.train --check
-```
-
-It lists every square where a label strongly disagrees with its picture. Those squares are left
-out of training automatically, but fixing them gives the reader more to learn from.
-
-If several pictures show the same position, they can share one checked label without editing
-each: add them to `assets/fixtures/same_position.json`
-(`{"same_position_as": {"photo-B": "photo-A"}}`); `photo-B` then uses `photo-A`'s board for
-training and testing.
-
-What to capture. Variety matters more than count:
-- different angles and distances, with the phone filling a third of the frame up to all of it
-- glare from a lamp or window, dim rooms, warm lamps, screen brightness low and high
-- different backgrounds, hands and shadows, and the phone's on-screen buttons
-- early, mid and late games, including boards with blanks on them
-- plain screenshots too
-
-The label format, if you ever write one by hand:
-
-```json
-{
-  "image": "photo-20261012-203300.jpg",
-  "input_type": "photo",
-  "status": "verified",
-  "board": ["...............", "... 15 strings of 15 characters ..."],
-  "rack": "AEIRS?T",
-  "labelled_at": "2026-10-12T20:40:00"
-}
-```
-
-Use `.` for an empty square, uppercase for a tile and lowercase for a blank.
-- `status` is `draft` for an unchecked guess.
-- An optional `board_quad` gives the board's corners in the photo, in pixels, in the order
-  top-left, top-right, bottom-right, bottom-left.
-
-Add `--collect-fixtures some/other/folder` to save somewhere else.
+- Each picture is kept with its game (`data/games/<id>/`), along with what the reader said about
+  it and where it found the board.
+- When you **confirm** a turn that came from a picture, the confirmed board and rack become that
+  picture's label. Pictures behind turns you typed, or suggestions you played, are not used,
+  because their board may include tiles the picture doesn't show.
+- The reader is **re-trained in the background after each such turn**, from those pictures plus
+  the older pictures in `assets/archive/` (labelled before games kept their own pictures; they
+  are used for training only and don't appear in the app). Improved readings apply to the next
+  picture; no restart is needed.
 
 ## The board reader
 
@@ -309,85 +240,27 @@ Limits for now:
   the picture is tinted so heavily that colours cannot be told apart, it says it couldn't find
   the board rather than guessing.
 
-### It learns from your labels
+### It learns from your games
 
-- With `--collect-fixtures`, every new picture is read straight away and saved as a draft label.
-  Pictures taken before the reader existed get drafted when the server starts.
-- Saving a corrected label re-trains the reader in the background, usually in under a minute.
-  The Fixtures page shows when it is learning. New pictures use the improved reader as soon as
-  it's done; there's no need to restart.
-
-To retrain or measure it by hand:
+Confirming a turn that came from a picture teaches the reader (see *Pictures and how the reader
+learns*). To retrain or measure it by hand:
 
 ```sh
-uv run python -m wwf.vision.train              # rebuild assets/models/reader.npz from checked labels
+uv run python -m wwf.vision.train              # rebuild assets/models/reader.npz from assets/archive/ and data/games/
 uv run python -m wwf.vision.train --evaluate   # accuracy, holding out each game position in turn
 uv run python -m wwf.vision.train --check      # labels that their pictures contradict
 ```
 
-The model file `assets/models/reader.npz` is built from your photos and isn't in git. On a fresh
-checkout, run the first command once your labelled fixtures are in place. Without a model, the app
-still works, but you type boards in by hand.
+Pass `--fixtures DIR` (the archive) or `--games DIR` to use other folders. The model file
+`assets/models/reader.npz` is built from your photos and isn't in git. On a fresh checkout, run
+the first command once labelled pictures are in place. Without a model, the app still works, but
+you type boards in by hand.
 
-## The HTTP API
+## Health check
 
-Interactive documentation for every endpoint is at <http://127.0.0.1:8000/docs> while the server
-runs; the raw schema is at `/openapi.json`. All endpoints live under `/api/v1`.
-
-| Method and path | Body | Returns |
-| --- | --- | --- |
-| `POST /recognize` | multipart `image` | Recognition result plus a new `session_id` |
-| `POST /session` | none | A new empty session, for typing a board in |
-| `GET /session/{id}` | none | Session state: board, rack, options, whether it has an image or result |
-| `GET /session/{id}/image` | none | The uploaded image |
-| `PUT /session/{id}/board` | `{board, rack}` | Session state; replaces both |
-| `PUT /session/{id}/options` | `{solver_id, params, dictionary_id?}` | Session state; 422 if invalid |
-| `POST /session/{id}/solve` | `{solver_id?, params?, dictionary_id?}` (all optional) | Ranked moves |
-| `GET /solvers` | none | Every solver with its parameter schema |
-| `GET /dictionaries` | none | Every word list |
-| `POST /validate` | `{board, rack, move, dictionary_id?}` | Named violations, plus the score if legal |
-| `GET /games` | none | Saved games, newest first, with whose turn and the score |
-| `GET /games/{id}` | none | One game: board, rack, scores, unseen tiles, and every logged turn |
-| `GET /health` | none | Status, default dictionary and word count, whether a vision model is loaded |
-
-Formats:
-
-- **Board:** a 15x15 array of `null` or a one-letter string. Uppercase is a normal tile, lowercase
-  a blank.
-- **Rack:** a string, with `?` for a blank.
-- **Coordinates:** `[row, col]`, zero-based. The web pages show them counting from 1.
-- **Moves:** each solve returns a list of moves. Every move has `word`, `direction`, `start`,
-  `placements` (`row`, `col`, `letter`, `is_blank`), `score` (`total`, `bingo_bonus`, and per-word
-  `points`), `leave`, and `board_after`, the full board after playing it.
-
-On `POST /session/{id}/solve`:
-- **Params:** any `params` given are merged over the session's saved options for that call only.
-- **Switching solver:** a `solver_id` different from the session's starts from that solver's
-  defaults.
-
-Every response carries a `request_id`, also sent as the `X-Request-ID` header and written to the
-server log. Errors look like `{"error": "...", "detail": ..., "request_id": "..."}`:
-
-| Status | When |
-| --- | --- |
-| 400 `undecodable_image` | The upload isn't an image |
-| 404 `session_not_found` | Unknown or expired session |
-| 413 `image_too_large` | Upload over 10 MB |
-| 422 `validation_error`, `invalid_params`, `unknown_solver`, `unknown_dictionary` | Bad input |
-| 504 `solve_timeout` | The solver ran over 10 seconds (`detail.partial` is true) |
-
-A complete round trip with curl:
-
-```sh
-SID=$(curl -s -X POST localhost:8000/api/v1/session | python3 -c "import sys,json;print(json.load(sys.stdin)['session_id'])")
-python3 -c "
-import json; b = [[None]*15 for _ in range(15)]
-for i, ch in enumerate('HELLO'): b[7][5+i] = ch
-print(json.dumps({'board': b, 'rack': 'SATIRE?'}))" > board.json
-curl -s -X PUT -H 'content-type: application/json' -d @board.json localhost:8000/api/v1/session/$SID/board > /dev/null
-curl -s -X POST -H 'content-type: application/json' -d '{"params": {"max_results": 3}}' \
-  localhost:8000/api/v1/session/$SID/solve | python3 -m json.tool | head -40
-```
+`GET /api/v1/health` returns `{status, dictionary_id, dictionary_words, model_loaded, games}`.
+The earlier JSON API (sessions, `/recognize`, `/solve`, `/validate`) was removed: the pages are
+the only interface, and the Python library below is the programmatic one.
 
 ## Using it from Python
 
@@ -774,8 +647,7 @@ What the tests cover:
   - the dictionary cache and the dictionary registry
   - a Hypothesis property that scores don't change when the board is transposed
 - **`tests/api`:**
-  - every API route and error code, plus session expiry, options validation and the solve timeout
-  - the pages, driven through their HTML forms as a browser without JavaScript would
+  - the pages, driven through their HTML forms as a browser without JavaScript would: the open turn and its confirmation, locked squares, undo, pictures and their labels, options, saving
 - **`tests/solvers`:**
   - the equivalence test: `anchor_trie` must find exactly the same legal moves and scores as the slow brute-force generator in `tests/solvers/reference.py`, on 20 random boards
   - every returned move passes `validate_move`
@@ -788,10 +660,12 @@ CI (`.github/workflows/ci.yml`) runs all of this on every push, plus the slow te
 ```text
 config/                   board layout, solver registry, dictionary list
 assets/dictionaries/      word lists (.txt)
+assets/archive/           older labelled pictures, training only (git-ignored)
 src/wwf/core/             board.py, rack.py, move.py, scoring.py, dictionary.py, config.py
 src/wwf/solvers/          base.py, registry.py, anchor_trie.py, dummy_random.py
-src/wwf/api/              app.py (factory, wwf-serve), services.py, session.py, schemas.py,
-                          games.py (saved games), gameplay.py (turns, undo), routes_*.py
+src/wwf/api/              app.py (factory, wwf-serve), services.py, schemas.py,
+                          games.py (games, turns, pictures, storage), gameplay.py (open turn,
+                          confirm, undo), routes_web.py, routes_game_pages.py
 src/wwf/web/              templates/ (Jinja2 pages), static/ (board.css, app.js, vendored htmx)
 src/wwf/vision/           board.py (find the board), align.py (fine alignment), occupancy.py (tile or
                           empty, relative to the picture), reader.py (letters, rack), pipeline.py,
@@ -808,8 +682,8 @@ data/games/               saved games (generated, git-ignored)
 | --- | --- |
 | `address already in use` from `wwf-serve` | Another server is on that port. Use `--port 8080`, or stop the other one. |
 | Phone can't open the app | Start with `--host 0.0.0.0`, use the computer's LAN IP, keep both on the same Wi-Fi, and allow Python through the macOS firewall if asked. |
-| Fixtures page says "fixture_mode_off" | Start the server with `--collect-fixtures`. |
-| "Session expired" | Only the JSON API's sessions and fixture-labelling pages expire (30 minutes). Games are saved. |
+| A tile won't change | It belongs to a confirmed turn. Press **Undo last turn** until it's open again, fix it and confirm. |
+| "Confirm or cancel the open turn first" | There are unconfirmed tiles on the board. Confirm them, or press **Cancel this turn**. |
 | "Game not found" | It was deleted, or the server is using a different `WWF_GAMES_DIR`. |
 | First solve takes several seconds | The dictionary is being built and cached. Later runs are fast. |
 | `RegistryError: solvers.json enables unknown solver id` | An enabled entry in `config/solvers.json` has no class in `src/wwf/solvers/`. Fix the id or set `"enabled": false`. |

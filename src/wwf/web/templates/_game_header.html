@@ -9,15 +9,20 @@
       </form>
     </details>
   </div>
+  {% if game.started %}
   <div class="scoreboard" aria-label="Score">
     <div class="score"><span class="who">You</span><span class="pts">{{ scores.me }}</span></div>
     <div class="score"><span class="who">Opponent</span><span class="pts">{{ scores.opponent }}</span></div>
     {% if bag %}<div class="score"><span class="who">In bag</span><span class="pts">{{ bag.in_bag }}</span></div>{% endif %}
   </div>
-  <ol class="stepper" aria-label="Where this turn is">
-    <li class="{{ 'now' if step == 1 else 'done' if step > 1 }}">Solve</li>
-    <li class="{{ 'now' if step == 2 else 'done' if step > 2 }}">Play a move</li>
-    <li class="{{ 'now' if step == 3 }}">Opponent</li>
-  </ol>
-  <p class="small hint">Points count turns logged here{% if not game.turns %}; none yet{% endif %}.</p>
+  <p class="turn-line">
+    <b>Turn {{ game.turn_number }}:</b>
+    {% if pending %}{{ "your" if open_player == "me" else "the opponent's" }} move is on the board, not confirmed yet.
+    {% elif game.phase == "my_turn" %}your move.
+    {% else %}waiting for the opponent's move.{% endif %}
+  </p>
+  {% else %}
+  <p class="turn-line"><b>Set up the game.</b> Take a picture or type the position in, correct any
+    square, then confirm the starting position. After that, confirmed tiles are locked.</p>
+  {% endif %}
 </section>

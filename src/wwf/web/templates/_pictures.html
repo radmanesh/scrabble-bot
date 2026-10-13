@@ -1,8 +1,10 @@
 <div class="retake">
   <div class="retake-text">
-    <h2>{{ "Take a picture" if game.phase == "opponent_turn" else "Update from a picture" }}</h2>
-    <p class="small">Tiles already on this board are kept as they are; only new tiles and your
-      rack are read from the picture.</p>
+    <h2>{{ "Take a picture" if game.started else "Picture of the game" }}</h2>
+    <p class="small">{% if game.started %}Confirmed tiles are kept as they are; new tiles and your
+      rack are read from the picture and become this turn's open tiles, which you can still fix.
+      Once you confirm the turn, the picture teaches the reader.{% else %}Read the position
+      from a picture, or type it in. You can check and fix every square before confirming.{% endif %}</p>
   </div>
   <form id="camera-form" class="image-form" action="/game/{{ game.id }}/image" method="post" enctype="multipart/form-data">
     <input type="hidden" name="source" value="photo">
@@ -22,3 +24,15 @@
   <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
 </div>
 <div class="notice error" id="send-error" role="alert" hidden></div>
+{% if pictures %}
+<div class="pic-strip">
+  {% for p in pictures %}
+  <a class="pic" href="/game/{{ game.id }}/picture/{{ p.id }}" target="_blank" rel="noopener">
+    <img src="/game/{{ game.id }}/picture/{{ p.id }}" alt="Picture {{ p.id }}" loading="lazy">
+    <span class="small">Turn {{ p.turn_n }} · {{ "uploaded" if p.source == "upload" else "photo" }}
+      {% if p.label_board %}· <span class="ok">learned</span>{% endif %}</span>
+  </a>
+  {% endfor %}
+</div>
+{% if picture_count > pictures | length %}<p class="hint small">The last {{ pictures | length }} of {{ picture_count }} pictures.</p>{% endif %}
+{% endif %}

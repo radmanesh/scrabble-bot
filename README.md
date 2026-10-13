@@ -158,3 +158,13 @@ The Label page in fixture mode is now only for labelling (with squares the pictu
 outlined), and **Play from this picture** starts a real game; the earlier habit of playing
 through the Label page was corrupting labels. `train --check` lists contradicted squares.
 
+
+**One game, one flow (refactor).** Sessions, fixtures, the Label page and the JSON API are gone.
+A game (`wwf.api.games`) now owns its turns *and* its pictures (`data/games/<id>/`). Everything
+that changes the board, whether a suggestion, a typed word (either player) or a picture, becomes
+an **open turn**: editable until **Confirm turn** locks it into the history (`wwf.api.gameplay`).
+Locked tiles are read-only (the server ignores edits to them) and only **Undo** reopens them. The
+starting position is the first locked turn. Confirming a turn made from a picture stores the
+confirmed board as that picture's label and retrains the reader in the background from the
+pictures of all games plus `assets/archive/` (the old fixtures, training only). Only
+`GET /api/v1/health` remains of the JSON API.

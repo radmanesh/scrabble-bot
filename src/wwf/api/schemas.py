@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict
 
 BOARD_SIZE = 15
 MAX_RACK = 7
@@ -93,46 +93,7 @@ class RecognitionResultOut(ApiModel):
     match: float | None = None  # how well the picture agrees with the board on file (0.5-1)
 
 
-class RecognizeResponse(RecognitionResultOut):
-    session_id: str
-    request_id: str = ""
-
-
 # --- sessions --------------------------------------------------------------------------------
-
-
-class BoardIn(ApiModel):
-    board: BoardGrid
-    rack: str = ""
-
-    _board = field_validator("board")(check_board)
-    _rack = field_validator("rack")(check_rack)
-
-
-class OptionsIn(ApiModel):
-    solver_id: str
-    params: dict[str, Any] = {}
-    dictionary_id: str | None = None
-
-
-class SolveIn(ApiModel):
-    solver_id: str | None = None
-    params: dict[str, Any] | None = None
-    dictionary_id: str | None = None
-
-
-class SessionState(Envelope):
-    session_id: str
-    board: BoardGrid
-    rack: str
-    has_image: bool
-    recognition: RecognitionResultOut | None
-    corrected: bool
-    solver_id: str
-    params: dict[str, Any]
-    dictionary_id: str
-    has_result: bool
-    expires_in_s: int  # seconds until the session expires; -1 for a saved game, which never does
 
 
 # --- solving ---------------------------------------------------------------------------------
@@ -154,51 +115,6 @@ class ScoreOut(ApiModel):
     total: int
     bingo_bonus: int
     words: list[WordOut]
-
-
-class TurnOut(ApiModel):
-    n: int
-    player: Literal["me", "opponent"]
-    kind: Literal["play", "pass"]
-    word: str
-    direction: str
-    start: tuple[int, int]
-    points: int
-    bingo: int
-    words: list[WordOut]
-    placements: list[PlacementOut]
-    source: str
-    forced: bool
-    at: str
-
-
-class GameSummary(ApiModel):
-    id: str
-    name: str
-    phase: Literal["my_turn", "opponent_turn"]
-    scores: dict[str, int]
-    turns: int
-    updated_at: str
-
-
-class GamesResponse(Envelope):
-    games: list[GameSummary]
-
-
-class GameOut(Envelope):
-    id: str
-    name: str
-    phase: Literal["my_turn", "opponent_turn"]
-    board: BoardGrid
-    rack: str
-    scores: dict[str, int]
-    in_bag: int
-    unseen: dict[str, int]
-    turns: list[TurnOut]
-    solver_id: str
-    dictionary_id: str
-    created_at: str
-    updated_at: str
 
 
 class MoveOut(ApiModel):
@@ -263,38 +179,9 @@ class DictionariesResponse(Envelope):
 # --- validation and health -------------------------------------------------------------------
 
 
-class PlacementIn(ApiModel):
-    row: int = Field(ge=0, lt=BOARD_SIZE)
-    col: int = Field(ge=0, lt=BOARD_SIZE)
-    letter: str = Field(min_length=1, max_length=1)
-    is_blank: bool | None = None  # default: lowercase letter means blank
-
-    @field_validator("letter")
-    @classmethod
-    def _letter(cls, v: str) -> str:
-        if not (v.isascii() and v.isalpha()):
-            raise ValueError("letter must be A-Z")
-        return v
-
-
-class MoveIn(ApiModel):
-    placements: list[PlacementIn] = Field(min_length=1, max_length=MAX_RACK)
-    direction: Literal["across", "down"] | None = None
-
-
-class ValidateIn(BoardIn):
-    move: MoveIn
-    dictionary_id: str | None = None
-
-
-class ValidateResponse(Envelope):
-    violations: list[str]
-    score: ScoreOut | None = None  # filled when the move is legal
-
-
 class HealthResponse(Envelope):
     status: Literal["ok"]
     dictionary_id: str
     dictionary_words: int
     model_loaded: bool
-    sessions: int
+    games: int

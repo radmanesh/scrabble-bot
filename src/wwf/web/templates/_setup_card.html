@@ -1,0 +1,10 @@
+<section class="card pending ok">
+  <h2>Starting position</h2>
+  <p class="small">{{ open_tiles | length }} tile{{ "s" if open_tiles | length != 1 }} on the board.
+    Check every square against your phone and fix what's wrong, then confirm. It locks the
+    position: from then on, each turn adds to it.</p>
+  <div class="actions">
+    <button type="submit" form="board-form" name="action" value="start_me" class="primary">Confirm · it's my turn</button>
+    <button type="submit" form="board-form" name="action" value="start_opponent">Confirm · it's their turn</button>
+  </div>
+</section>

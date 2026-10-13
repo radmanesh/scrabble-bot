@@ -1,10 +1,10 @@
-"""Turn-by-turn play: logging both players' moves, spotting the opponent's, and undoing.
+"""Turn-by-turn play: one open turn at a time, locked once confirmed.
 
-The model is simple. A game has a `base_board` (the board when the pending turn began) and a
-`board` (what is on the page now). Tiles on `board` that are not on `base_board` are the pending
-move: an opponent's move read from a photo, typed into the grid, or entered as a word. Logging
-a turn writes it to the history with a snapshot of the state before it, which is what undo
-restores.
+A game has a `base_board` (everything confirmed so far) and a `board` (what is on the page now).
+The tiles on `board` that are not on `base_board` are the *open turn*, whichever way they got
+there: a suggestion you played, a word you typed for either player, or a picture. The open turn
+is editable until `confirm_turn` writes it to the history, which locks it. Undo reopens the last
+confirmed turn.
 """
 
 from __future__ import annotations
@@ -12,9 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from wwf.api.fixtures import grid_to_rows, rows_to_grid
-from wwf.api.games import Game, Player, Turn
-from wwf.api.schemas import MAX_RACK, check_rack
+from wwf.api.games import Game, Picture, Player, Turn, grid_to_rows, rows_to_grid
+from wwf.api.schemas import MAX_RACK, BoardGrid, check_rack
 from wwf.api.services import ApiError, Services
 from wwf.core.bag import BagReport, bag_report
 from wwf.core.board import Board
@@ -56,15 +55,14 @@ class Analysis:
 
 @dataclass
 class Pending:
-    """New tiles since the turn began, understood as a move."""
+    """The open turn's tiles, understood as a move."""
 
     analysis: Analysis
     placements: list[Placement]
-    changed: int = 0  # existing tiles whose letter differs from the base board
     positions: set[tuple[int, int]] = field(default_factory=set)
 
 
-def safe_board(svc: Services, grid: list[list[str | None]]) -> Board | None:
+def safe_board(svc: Services, grid: BoardGrid) -> Board | None:
     """The grid as a Board, or None while it holds something unreadable (a "?" tile)."""
     try:
         return svc.board(grid)
@@ -83,6 +81,16 @@ def analyse(
     return Analysis(move, violations, score)
 
 
+def open_positions(game: Game) -> set[tuple[int, int]]:
+    """Squares that hold a tile now and are not locked: the open turn."""
+    return {
+        (r, c)
+        for r, row in enumerate(game.board)
+        for c, ch in enumerate(row)
+        if ch and not game.base_board[r][c]
+    }
+
+
 def pending_move(svc: Services, game: Game) -> Pending | None:
     """The move implied by the tiles added to the base board, if there are any."""
     base, now = safe_board(svc, game.base_board), safe_board(svc, game.board)
@@ -95,7 +103,6 @@ def pending_move(svc: Services, game: Game) -> Pending | None:
     return Pending(
         analysis=analyse(svc, base, placements, game.dictionary_id),
         placements=placements,
-        changed=len(diff.changed),
         positions={(p.row, p.col) for p in placements},
     )
 
@@ -113,7 +120,14 @@ def bag_for(svc: Services, game: Game) -> BagReport | None:
 
 def drew_prompt(svc: Services, game: Game) -> str | None:
     """The tiles kept from the last turn, when it is your turn and the rack is not full."""
-    if game.phase != "my_turn" or not game.turns or len(game.rack) >= MAX_RACK:
+    last = game.last_turn()
+    if (
+        game.phase != "my_turn"
+        or last is None
+        or last.kind == "start"
+        or len(game.rack) >= MAX_RACK
+        or open_positions(game)
+    ):
         return None
     bag = bag_for(svc, game)
     if bag is not None and bag.in_bag == 0:
@@ -121,32 +135,160 @@ def drew_prompt(svc: Services, game: Game) -> str | None:
     return game.rack
 
 
-# --- logging turns ----------------------------------------------------------------------------
+# --- editing the open turn --------------------------------------------------------------------
 
 
-def _snapshot(game: Game, *, board: list[list[str | None]] | None = None) -> dict[str, Any]:
+def apply_edit(game: Game, board: BoardGrid, rack: str) -> int:
+    """Take the board and rack from the page. Squares of confirmed turns are read-only: whatever
+    the page says for them is ignored. Returns how many such squares differed."""
+    ignored = 0
+    merged: BoardGrid = []
+    for r, row in enumerate(board):
+        out: list[str | None] = []
+        for c, ch in enumerate(row):
+            locked = game.base_board[r][c]
+            if locked:
+                ignored += ch != locked
+                out.append(locked)
+            else:
+                out.append(ch)
+        merged.append(out)
+    if merged != game.board:
+        game.last_result = None
+    game.board = merged
+    game.rack = rack
+    _track_source(game, "grid")
+    return ignored
+
+
+def _track_source(game: Game, source: str) -> None:
+    """Keep `open_source` in step with whether there is an open turn."""
+    if not open_positions(game):
+        game.open_source = ""
+        game.open_player = None
+    elif not game.open_source:
+        game.open_source = source
+
+
+def _rack_after(rack: str, placements: list[Placement]) -> str:
+    left = list(rack)
+    for p in placements:
+        tile = "?" if p.tile.is_blank else p.tile.letter.upper()
+        if tile in left:
+            left.remove(tile)
+    return "".join(left)
+
+
+def _require_closed(game: Game) -> None:
+    if open_positions(game):
+        raise MoveRejected(["turn_open"])
+
+
+def apply_solver_move(game: Game, n: int) -> None:
+    """Put move `n` of the last solve on the board as the open turn; your rack becomes the leave."""
+    result = game.last_result
+    if result is None or not 0 <= n < len(result.moves):
+        raise ApiError(422, "no_such_move", {"n": n})
+    _require_closed(game)
+    mv = result.moves[n]
+    game.board = [row[:] for row in mv.board_after]
+    game.rack = mv.leave
+    game.open_source = "suggestion"
+    game.open_player = "me"
+    game.last_result = None
+    game.recognition = None
+
+
+def apply_typed_move(
+    svc: Services, game: Game, player: Player, word: str, row: int, col: int, direction: str
+) -> None:
+    """Put a word (one-based row and column of its first letter) on the board as the open turn."""
+    _require_closed(game)
+    board = safe_board(svc, game.board)
+    if board is None:
+        raise MoveRejected(["unreadable_board"])
+    placements, problems = placements_for_word(board, word, row - 1, col - 1, Direction(direction))
+    if problems:
+        raise MoveRejected(problems)
+    game.board = board.with_move(build_move(board, placements)).to_grid()
+    if player == "me":
+        game.rack = _rack_after(game.rack, placements)
+    game.open_source = "typed"
+    game.open_player = player
+    game.last_result = None
+    game.recognition = None
+
+
+def cancel_turn(game: Game) -> None:
+    """Throw away the open turn: the board and rack go back to how the turn began."""
+    game.board = [row[:] for row in game.base_board]
+    game.rack = game.base_rack
+    game.open_source = ""
+    game.open_player = None
+    game.last_result = None
+    game.recognition = None
+
+
+# --- confirming turns -------------------------------------------------------------------------
+
+
+def _lock(game: Game, turn: Turn) -> Turn:
+    """Close the open turn: it joins the history, and its pictures get the confirmed board as
+    their label when it came from a picture."""
+    open_pics = game.open_pictures()
+    if game.open_source == "picture" and open_pics:
+        turn.picture = open_pics[-1].id
+        for pic in open_pics:
+            pic.label_board = grid_to_rows(game.board)
+            pic.label_rack = game.rack
+            pic.label_turn = turn.n
+    game.turns.append(turn)
+    game.base_board = [row[:] for row in game.board]
+    game.base_rack = game.rack
+    game.open_source = ""
+    game.open_player = None
+    game.last_result = None
+    game.recognition = None
+    return turn
+
+
+def _snapshot(game: Game) -> dict[str, Any]:
     return {
-        "before_board": grid_to_rows(board if board is not None else game.board),
-        "before_rack": game.rack,
         "before_base": grid_to_rows(game.base_board),
+        "before_base_rack": game.base_rack,
         "before_phase": game.phase,
     }
 
 
-def _finish(game: Game, turn: Turn, player: Player) -> Turn:
-    game.turns.append(turn)
-    game.phase = "opponent_turn" if player == "me" else "my_turn"
-    game.base_board = [row[:] for row in game.board]
-    game.last_result = None
-    return turn
+def start_game(game: Game, phase: str) -> Turn:
+    """Confirm the position on the board as where tracking begins. No legality check: it is
+    whatever the phone shows."""
+    if game.started:
+        raise ApiError(422, "already_started")
+    turn = Turn(
+        n=1,
+        player="me",
+        kind="start",
+        tiles=sum(1 for row in game.board for ch in row if ch),
+        source=game.open_source or "grid",
+        **_snapshot(game),
+    )
+    game.started = True
+    game.phase = "opponent_turn" if phase == "opponent_turn" else "my_turn"
+    game.turns.clear()
+    return _lock(game, turn)
 
 
-def _play_turn(
-    game: Game, player: Player, analysis: Analysis, source: str, forced: bool, snap: dict[str, Any]
-) -> Turn:
+def confirm_turn(svc: Services, game: Game, player: Player, force: bool = False) -> Turn:
+    """Log the open turn as `player`'s move and lock it."""
+    pending = pending_move(svc, game)
+    if pending is None:
+        raise MoveRejected(["no_new_tiles"])
+    analysis = pending.analysis
+    if analysis.score is None or (analysis.violations and not (force and analysis.forceable)):
+        raise MoveRejected(analysis.violations, forceable=analysis.forceable)
     move, score = analysis.move, analysis.score
-    assert score is not None
-    return Turn(
+    turn = Turn(
         n=len(game.turns) + 1,
         player=player,
         kind="play",
@@ -160,103 +302,59 @@ def _play_turn(
         words=[{"word": w.word, "points": w.points} for w in score.words],
         points=score.total,
         bingo=score.bingo_bonus,
-        source=source,
-        forced=forced,
-        **snap,
-    )
-
-
-def play_solver_move(game: Game, n: int) -> Turn:
-    """Make move `n` of the last solve: the board, your rack and the turn all move on."""
-    result = game.last_result
-    if result is None or not 0 <= n < len(result.moves):
-        raise ApiError(422, "no_such_move", {"n": n})
-    mv = result.moves[n]
-    turn = Turn(
-        n=len(game.turns) + 1,
-        player="me",
-        kind="play",
-        word=mv.word,
-        direction=mv.direction,
-        start=mv.start,
-        placements=[p.model_dump() for p in mv.placements],
-        words=[w.model_dump() for w in mv.score.words],
-        points=mv.score.total,
-        bingo=mv.score.bingo_bonus,
-        source="solver",
+        source=game.open_source or "grid",
+        forced=bool(analysis.violations),
         **_snapshot(game),
     )
-    game.board = [row[:] for row in mv.board_after]
-    game.rack = mv.leave
-    game.clear_picture()
-    return _finish(game, turn, "me")
+    game.phase = "opponent_turn" if player == "me" else "my_turn"
+    return _lock(game, turn)
 
 
-def play_typed_move(
-    svc: Services,
-    game: Game,
-    player: Player,
-    word: str,
-    row: int,
-    col: int,
-    direction: str,
-    force: bool = False,
-) -> Turn:
-    """Log a move given as a word and where it starts (one-based row and column)."""
-    board = safe_board(svc, game.board)
-    if board is None:
-        raise MoveRejected(["unreadable_board"])
-    placements, problems = placements_for_word(board, word, row - 1, col - 1, Direction(direction))
-    if problems:
-        raise MoveRejected(problems)
-    analysis = analyse(svc, board, placements, game.dictionary_id)
-    if analysis.score is None or (analysis.violations and not (force and analysis.forceable)):
-        raise MoveRejected(analysis.violations, forceable=analysis.forceable)
-    snap = _snapshot(game)
-    game.board = board.with_move(analysis.move).to_grid()
-    game.clear_picture()
-    turn = _play_turn(game, player, analysis, "typed", forced=bool(analysis.violations), snap=snap)
-    return _finish(game, turn, player)
-
-
-def confirm_pending(svc: Services, game: Game, player: Player, force: bool = False) -> Turn:
-    """Log the tiles added since the turn began as `player`'s move."""
-    pending = pending_move(svc, game)
-    if pending is None:
+def accept_board(game: Game) -> Turn:
+    """Take the open tiles as they are without scoring them (a picture that caught up several
+    turns, say). The history shows it as a board update; the phase stays."""
+    tiles = len(open_positions(game))
+    if not tiles:
         raise MoveRejected(["no_new_tiles"])
-    analysis = pending.analysis
-    if analysis.score is None or (analysis.violations and not (force and analysis.forceable)):
-        raise MoveRejected(analysis.violations, forceable=analysis.forceable)
-    # the board already holds the tiles, so undo returns to the base board
-    snap = _snapshot(game, board=game.base_board)
-    turn = _play_turn(
-        game, player, analysis, "photo" if game.image else "grid", bool(analysis.violations), snap
+    turn = Turn(
+        n=len(game.turns) + 1,
+        player=game.player_to_move,
+        kind="start",
+        tiles=tiles,
+        source=game.open_source or "grid",
+        **_snapshot(game),
     )
-    return _finish(game, turn, player)
-
-
-def accept_board(game: Game) -> None:
-    """Take the board as it is, without logging a move: it becomes the new base."""
-    game.base_board = [row[:] for row in game.board]
+    return _lock(game, turn)
 
 
 def pass_turn(game: Game, player: Player) -> Turn:
+    if open_positions(game):
+        raise MoveRejected(["turn_open"])
     turn = Turn(
         n=len(game.turns) + 1, player=player, kind="pass", source="typed", **_snapshot(game)
     )
-    return _finish(game, turn, player)
+    game.phase = "opponent_turn" if player == "me" else "my_turn"
+    return _lock(game, turn)
 
 
 def undo(game: Game) -> Turn:
+    """Reopen the last confirmed turn: its tiles become the open turn again, editable."""
     if not game.turns:
         raise ApiError(422, "nothing_to_undo")
     turn = game.turns.pop()
-    game.board = rows_to_grid(turn.before_board)
-    game.rack = turn.before_rack
     game.base_board = rows_to_grid(turn.before_base)
+    game.base_rack = turn.before_base_rack
     game.phase = "opponent_turn" if turn.before_phase == "opponent_turn" else "my_turn"
+    game.board = game.board if turn.kind != "pass" else [row[:] for row in game.base_board]
+    game.open_source = turn.source if open_positions(game) else ""
+    game.open_player = turn.player if turn.kind == "play" and game.open_source else None
+    for pic in game.pictures:  # the picture's label belonged to that turn; it can change now
+        if pic.label_turn == turn.n:
+            pic.label_board = pic.label_rack = pic.label_turn = None
+    if not game.turns:
+        game.started = False
     game.last_result = None
-    game.clear_picture()
+    game.recognition = None
     return turn
 
 
@@ -269,8 +367,14 @@ def add_drawn_tiles(game: Game, letters: str) -> str:
     if len(combined) > MAX_RACK:
         raise ValueError(f"Your rack would have {len(combined)} tiles; the most is {MAX_RACK}.")
     game.rack = combined
+    game.base_rack = combined if not open_positions(game) else game.base_rack
     game.last_result = None
     return combined
+
+
+def labelled_pictures(game: Game, turn: Turn) -> list[Picture]:
+    """The pictures that this confirmed turn gave a label to."""
+    return [p for p in game.pictures if p.label_turn == turn.n]
 
 
 # --- plain-language messages -----------------------------------------------------------------
@@ -294,7 +398,8 @@ def explain(problem: str, dictionary_label: str = "the word list") -> str:
         "out_of_bounds": "The word runs off the board.",
         "empty_word": "Type the word first.",
         "bad_letter": "Use letters only (lowercase marks a blank).",
-        "no_new_tiles": "That word is already on the board: no new tiles.",
+        "no_new_tiles": "No new tiles on the board.",
+        "turn_open": "Confirm or cancel the open turn first.",
         "unreadable_board": "Fix the unreadable tiles ('?') on the board first.",
         "no_tiles_placed": "No new tiles.",
     }.get(name, name)

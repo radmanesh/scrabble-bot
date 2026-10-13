@@ -94,7 +94,7 @@ def test_recognize_bytes_and_decode(current: BoardConfig, synthetic_model: Reade
 
 # --- real pictures: only when the owner's fixtures are present ---------------------------------
 
-FIXTURES = assets_dir() / "fixtures"
+FIXTURES = assets_dir() / "archive"
 
 
 def _labelled() -> int:
@@ -104,7 +104,7 @@ def _labelled() -> int:
 
 
 needs_pictures = pytest.mark.skipif(
-    _labelled() < 5, reason="needs labelled pictures in assets/fixtures"
+    _labelled() < 5, reason="needs labelled pictures in assets/archive"
 )
 
 

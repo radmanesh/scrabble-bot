@@ -1,420 +1,425 @@
-"""The multi-turn loop: solve, play, the opponent's move, undo, persistence."""
+"""The turn loop: an editable open turn that is locked when confirmed."""
 
 from __future__ import annotations
 
-import html
-import json
-from collections.abc import Iterator
+import html as htmllib
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.api.test_next_turn import FakeReader, _png, _reading
-from wwf.api.app import create_app
-from wwf.api.services import Settings
-from wwf.core.board import Board, Tile
-from wwf.core.config import load_board_config
-from wwf.core.move import Placement, build_move
-from wwf.core.scoring import score_move
+from tests.api.helpers import FakeReader, form, new_game, reading, send_picture, started_game
+from wwf.api.games import GameStore
+from wwf.api.services import Services
 
-API = "/api/v1"
+
+def _text(response: object) -> str:
+    return htmllib.unescape(response.text)  # type: ignore[attr-defined]
 
 
 @pytest.fixture
-def games_dir(tmp_path: Path) -> Path:
-    return tmp_path / "games"
+def retrains(services: Services, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+    monkeypatch.setattr(services, "schedule_retrain", lambda: calls.append(1) or True)
+    return calls
 
 
-@pytest.fixture
-def reader() -> FakeReader:
-    return FakeReader()
-
-
-@pytest.fixture
-def client(games_dir: Path, reader: FakeReader) -> Iterator[TestClient]:
-    with TestClient(create_app(Settings(games_dir=games_dir), recognizer=reader)) as c:
-        yield c
-
-
-def _form(rows: dict[int, tuple[int, str]], rack: str, action: str = "save") -> dict[str, str]:
-    form = {f"c-{r}-{c}": "" for r in range(15) for c in range(15)}
-    for r, (c0, word) in rows.items():
-        for i, ch in enumerate(word):
-            form[f"c-{r}-{c0 + i}"] = ch
-    form |= {f"r-{i}": rack[i] if i < len(rack) else "" for i in range(7)}
-    return form | {"action": action}
-
-
-def _start(client: TestClient, rack: str = "SATIRE?") -> str:
-    """A new game with HELLO across row 8 (one-based), saved with the given rack."""
-    r = client.post("/new", follow_redirects=False)
-    gid: str = r.headers["location"].rsplit("/", 1)[1]
-    client.post(f"/game/{gid}/board", data=_form({7: (5, "HELLO")}, rack))
-    return gid
-
-
-def _text(response: Any) -> str:
-    """The page as plain text: Jinja escapes apostrophes as &#39;."""
-    return html.unescape(response.text)
-
-
-def _game(client: TestClient, gid: str) -> dict[str, Any]:
-    return client.get(f"{API}/games/{gid}").json()  # type: ignore[no-any-return]
-
-
-def _expected_score(grid_rows: list[str], placements: list[tuple[int, int, str]]) -> int:
-    cfg = load_board_config()
-    board = Board.from_rows(cfg, grid_rows)
-    move = build_move(board, [Placement(r, c, Tile.from_char(ch)) for r, c, ch in placements])
-    return score_move(board, move, cfg).total
-
-
-HELLO_ROWS = ["." * 15] * 7 + [".....HELLO....."] + ["." * 15] * 7
-
-
-# --- your move -------------------------------------------------------------------------------
-
-
-def test_play_a_solver_move(client: TestClient) -> None:
-    gid = _start(client)
-    client.post(f"/game/{gid}/solve")
-    page = client.get(f"/game/{gid}").text
-    assert "Best moves" in page and "Play " in page  # the Play button is on the page
-
-    top = client.post(f"{API}/session/{gid}/solve").json()["moves"][0]
-    r = client.post(f"/game/{gid}/play/0", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == f"/game/{gid}"
-
-    g = _game(client, gid)
-    assert g["phase"] == "opponent_turn"
-    assert g["scores"] == {"me": top["score"]["total"], "opponent": 0}
-    assert g["rack"] == top["leave"]
-    turn = g["turns"][0]
-    assert (turn["player"], turn["word"], turn["source"]) == ("me", top["word"], "solver")
-    assert g["board"] == top["board_after"]
-    assert "Opponent's turn" in client.get(f"/game/{gid}").text
-
-
-def test_play_needs_a_solve_first(client: TestClient) -> None:
-    gid = _start(client)
-    r = client.post(f"/game/{gid}/play/0")
-    assert r.status_code == 422 and "solve again" in r.text
-
-
-# --- the opponent's move ---------------------------------------------------------------------
-
-
-def _my_pass(client: TestClient, gid: str) -> None:
-    client.post(f"/game/{gid}/pass", data={"who": "me"})
-    assert _game(client, gid)["phase"] == "opponent_turn"
-
-
-def test_opponent_typed_word(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    # OX down from the O of HELLO: the O is at one-based row 8, column 10
-    r = client.post(
-        f"/game/{gid}/opponent",
-        data={"word": "OX", "row": "8", "col": "10", "direction": "down"},
+def _word(client: TestClient, gid: str, word: str, row: int, col: int, direction: str,
+          player: str) -> object:  # fmt: skip
+    return client.post(
+        f"/game/{gid}/word",
+        data={"word": word, "row": row, "col": col, "direction": direction, "player": player},
         follow_redirects=False,
     )
+
+
+# --- the starting position ------------------------------------------------------------------
+
+
+def test_starting_position_locks_the_board(client: TestClient, services: Services) -> None:
+    gid = started_game(client)
+    game = services.game(gid)
+    assert game.started and len(game.turns) == 1
+    start = game.turns[0]
+    assert (start.kind, start.tiles, start.points) == ("start", 5, 0)
+    assert game.phase == "my_turn" and game.base_board[7][5:10] == list("HELLO")
+    html = client.get(f"/game/{gid}").text
+    assert html.count(" readonly") == 5  # the five locked squares
+
+
+def test_locked_squares_ignore_edits(client: TestClient, services: Services) -> None:
+    gid = started_game(client)
+    # the page posts HELLS and an extra tile; the locked S-for-O edit is dropped, the new tile kept
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLS"), 8: (5, "A")}, "SATIRE?"))
+    game = services.game(gid)
+    assert game.board[7][5:10] == list("HELLO") and game.board[8][5] == "A"
+    assert game.open_source == "grid"
+
+
+def test_start_with_opponent_to_move(client: TestClient, services: Services) -> None:
+    gid = started_game(client, phase="start_opponent")
+    assert services.game(gid).phase == "opponent_turn"
+    assert "Turn 2" in client.get(f"/game/{gid}").text
+
+
+# --- your move: suggestion, then confirm ----------------------------------------------------
+
+
+def test_play_a_suggestion_is_an_open_turn_until_confirmed(
+    client: TestClient, services: Services
+) -> None:
+    gid = started_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "solve"))
+    r = client.post(f"/game/{gid}/play/0", follow_redirects=False)
     assert r.status_code == 303
-    g = _game(client, gid)
-    assert g["phase"] == "my_turn"
-    t = g["turns"][-1]
-    assert (t["player"], t["word"], t["direction"], t["start"]) == (
-        "opponent",
-        "OX",
-        "down",
-        [7, 9],
-    )
-    assert t["points"] == _expected_score(HELLO_ROWS, [(8, 9, "X")])
-    assert g["scores"]["opponent"] == t["points"] > 0
-    assert g["board"][8][9] == "X"
+    game = services.game(gid)
+    assert len(game.turns) == 1  # nothing logged yet
+    assert game.open_source == "suggestion" and game.open_player == "me"
+    assert sum(ch is not None for row in game.board for ch in row) > 5
+    assert game.base_board[7][5:10] == list("HELLO")
+    assert len(game.rack) < 7  # the leave
+    page = client.get(f"/game/{gid}").text
+    assert "not confirmed" in page and "Confirm your move" in page
+
+    # typing a word or playing another suggestion needs the open turn dealt with first
+    assert _word(client, gid, "AX", 1, 1, "across", "me").status_code == 422  # type: ignore[attr-defined]
+
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_me"))
+    game = services.game(gid)
+    assert len(game.turns) == 2 and game.turns[1].player == "me" and game.turns[1].points > 0
+    assert game.phase == "opponent_turn" and game.open_source == ""
+    assert game.scores()["me"] == game.turns[1].points
+    assert game.base_board == game.board
+
+
+def _current_form(services: Services, gid: str, action: str) -> dict[str, str]:
+    game = services.game(gid)
+    data = {f"c-{r}-{c}": game.board[r][c] or "" for r in range(15) for c in range(15)}
+    data |= {f"r-{i}": game.rack[i] if i < len(game.rack) else "" for i in range(7)}
+    return data | {"action": action}
+
+
+def test_cancel_returns_board_and_rack(client: TestClient, services: Services) -> None:
+    gid = started_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "solve"))
+    client.post(f"/game/{gid}/play/0")
+    client.post(f"/game/{gid}/board", data={"action": "cancel"})
+    game = services.game(gid)
+    assert game.board == game.base_board and game.rack == "SATIRE?"
+    assert game.open_source == "" and len(game.turns) == 1
+
+
+def test_open_turn_tiles_can_be_edited_before_confirming(
+    client: TestClient, services: Services
+) -> None:
+    gid = started_game(client)
+    assert _word(client, gid, "HAT", 8, 6, "down", "me").status_code == 303  # type: ignore[attr-defined]
+    game = services.game(gid)
+    assert game.board[8][5] == "A" and game.board[9][5] == "T"
+    assert game.rack == "SIRE?"  # A and T used; the rack left over
+    # you mistyped: it is HIT. Edit the A, then confirm.
+    data = _current_form(services, gid, "confirm_me")
+    data["c-8-5"] = "I"
+    client.post(f"/game/{gid}/board", data=data)
+    turn = services.game(gid).turns[-1]
+    assert turn.word == "HIT" and turn.points > 0
+
+
+# --- the opponent's move: typed ------------------------------------------------------------
+
+
+def test_typed_opponent_move_is_confirmed_then_it_is_your_turn(
+    client: TestClient, services: Services
+) -> None:
+    gid = started_game(client, phase="start_opponent")
+    assert _word(client, gid, "HAT", 8, 6, "down", "opponent").status_code == 303  # type: ignore[attr-defined]
+    game = services.game(gid)
+    assert game.open_player == "opponent" and game.rack == "SATIRE?"  # your rack is untouched
+    assert "Confirm opponent&#39;s move" in client.get(f"/game/{gid}").text
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_opponent"))
+    game = services.game(gid)
+    assert game.turns[-1].player == "opponent" and game.phase == "my_turn"
+    assert game.scores()["opponent"] == game.turns[-1].points > 0
 
 
 def test_typed_word_problems_are_explained(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    wrong_letter = client.post(
-        f"/game/{gid}/opponent",
-        data={"word": "HALLO", "row": "8", "col": "6", "direction": "across"},
-    )
-    assert wrong_letter.status_code == 422
-    assert "already has E at row 8, column 7" in _text(wrong_letter)
-
-    off_board = client.post(
-        f"/game/{gid}/opponent",
-        data={"word": "QUIZ", "row": "1", "col": "14", "direction": "across"},
-    )
-    assert "runs off the board" in off_board.text
-
-    no_contact = client.post(
-        f"/game/{gid}/opponent", data={"word": "CAT", "row": "1", "col": "1", "direction": "across"}
-    )
-    assert "doesn't touch any tile" in _text(no_contact)
-    assert _game(client, gid)["turns"][-1]["kind"] == "pass"  # nothing was logged
+    gid = started_game(client)
+    r = _word(client, gid, "XYZ", 1, 14, "across", "opponent")
+    assert r.status_code == 422 and "runs off the board" in _text(r)  # type: ignore[attr-defined]
+    r = _word(client, gid, "HAT", 0, 1, "across", "opponent")
+    assert r.status_code == 422  # type: ignore[attr-defined]
+    r = _word(client, gid, "HAT", 8, 6, "down", "opponent")
+    assert r.status_code == 303  # type: ignore[attr-defined]
+    r = _word(client, gid, "AX", 1, 1, "across", "opponent")  # one open turn at a time
+    assert r.status_code == 422 and "Confirm or cancel" in _text(r)  # type: ignore[attr-defined]
 
 
-def test_word_not_in_the_list_can_be_forced(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    data = {"word": "OZX", "row": "8", "col": "10", "direction": "down"}
-    r = client.post(f"/game/{gid}/opponent", data=data)
-    assert r.status_code == 422
-    assert "OZX isn't in" in _text(r) and 'name="force"' in r.text  # offered, not assumed
-
-    r = client.post(f"/game/{gid}/opponent", data=data | {"force": "1"}, follow_redirects=False)
-    assert r.status_code == 303
-    t = _game(client, gid)["turns"][-1]
-    assert (t["word"], t["forced"]) == ("OZX", True)
-    assert 'class="badge"' in client.get(f"/game/{gid}").text
+def test_word_not_in_the_list_can_be_forced(client: TestClient, services: Services) -> None:
+    gid = started_game(client, phase="start_opponent")
+    _word(client, gid, "HQZ", 8, 6, "down", "opponent")
+    r = client.post(f"/game/{gid}/board",
+                    data=_current_form(services, gid, "confirm_opponent"))  # fmt: skip
+    assert r.status_code == 422 and "isn't in" in _text(r)
+    data = _current_form(services, gid, "confirm_opponent") | {"force": "1"}
+    client.post(f"/game/{gid}/board", data=data)
+    turn = services.game(gid).turns[-1]
+    assert turn.word == "HQZ" and turn.forced
 
 
-def test_opponent_pass(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    client.post(f"/game/{gid}/pass", data={"who": "opponent"})
-    g = _game(client, gid)
-    assert g["phase"] == "my_turn" and g["turns"][-1]["kind"] == "pass"
-    assert g["scores"] == {"me": 0, "opponent": 0}
-
-
-# --- the opponent's move from the board ------------------------------------------------------
-
-
-def test_grid_edit_is_found_as_the_opponents_move(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    # they played OX: type the X into the grid and save, as after correcting a photo
-    client.post(f"/game/{gid}/board", data=_form({7: (5, "HELLO"), 8: (9, "X")}, "SATIRE?"))
-    page = client.get(f"/game/{gid}").text
-    assert "Opponent's move found" in html.unescape(page)
-    assert "<b>OX</b>" in page and "Log opponent" in page
-
-    r = client.post(f"/game/{gid}/pending", data={"action": "confirm_opponent"},
-                    follow_redirects=False)  # fmt: skip
-    assert r.status_code == 303
-    g = _game(client, gid)
-    assert g["phase"] == "my_turn"
-    t = g["turns"][-1]
-    assert (t["player"], t["word"], t["source"]) == ("opponent", "OX", "grid")
-    assert t["points"] == _expected_score(HELLO_ROWS, [(8, 9, "X")])
-
-
-def test_unclear_tiles_are_not_logged(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    # two stray tiles that are not in one line: a misread, not a move
-    client.post(
-        f"/game/{gid}/board", data=_form({7: (5, "HELLO"), 5: (2, "Q"), 10: (11, "Z")}, "SATIRE?")
-    )
-    page = _text(client.get(f"/game/{gid}"))
-    assert "aren't in one row or one column" in page
-    assert 'value="confirm_opponent"' not in page  # nothing to confirm
-    r = client.post(f"/game/{gid}/pending", data={"action": "confirm_opponent"})
-    assert r.status_code == 422
-
-    client.post(f"/game/{gid}/pending", data={"action": "accept"})  # just take the board
-    assert "move found" not in client.get(f"/game/{gid}").text
-
-
-def test_my_turn_new_tiles_can_be_logged_either_way(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    client.post(f"/game/{gid}/pass", data={"who": "opponent"})  # back to my turn, with history
-    client.post(f"/game/{gid}/board", data=_form({7: (5, "HELLO"), 8: (9, "X")}, "SATIRE?"))
-    page = client.get(f"/game/{gid}").text
-    assert "New tiles on the board" in page
-    assert 'value="confirm_me"' in page and 'value="confirm_opponent"' in page
-
-    client.post(f"/game/{gid}/pending", data={"action": "confirm_me"})
-    g = _game(client, gid)
-    assert g["turns"][-1]["player"] == "me" and g["phase"] == "opponent_turn"
-
-
-def test_first_board_is_not_a_move(client: TestClient) -> None:
-    """Before any turn is logged, the board you type or photograph is just the position."""
-    gid = _start(client)
-    assert "New tiles on the board" not in client.get(f"/game/{gid}").text
-    client.post(f"/game/{gid}/board", data=_form({7: (5, "HELLO"), 8: (9, "X")}, "SATIRE?"))
-    assert "New tiles on the board" not in client.get(f"/game/{gid}").text
-
-
-def test_photo_in_the_opponents_turn_finds_their_move(
-    client: TestClient, reader: FakeReader
+def test_illegal_placement_cannot_be_confirmed_but_can_be_fixed(
+    client: TestClient, services: Services
 ) -> None:
-    reader.next = _reading({7: (5, "HELLO")}, "ABCDEFG")
-    r = client.post("/upload", files={"image": ("a.png", _png(), "image/png")},
-                    follow_redirects=False)  # fmt: skip
-    gid = r.headers["location"].rsplit("/", 1)[1]
-    _my_pass(client, gid)
-
-    reader.next = _reading({7: (5, "HELLO"), 8: (9, "X")}, "ABCDEFG")
-    client.post(f"/game/{gid}/image", files={"image": ("b.png", _png(), "image/png")})
-    page = client.get(f"/game/{gid}").text
-    assert "<b>OX</b>" in page and "Log opponent" in page
-    client.post(f"/game/{gid}/pending", data={"action": "confirm_opponent"})
-    g = _game(client, gid)
-    assert g["turns"][-1]["word"] == "OX" and g["phase"] == "my_turn"
-    assert g["turns"][-1]["source"] == "photo"
+    gid = started_game(client, phase="start_opponent")
+    # two tiles far apart: not one line of contiguous tiles
+    data = _current_form(services, gid, "confirm_opponent")
+    data["c-8-5"] = "A"
+    data["c-3-12"] = "T"
+    r = client.post(f"/game/{gid}/board", data=data)
+    assert r.status_code == 422 and len(services.game(gid).turns) == 1
+    assert services.game(gid).board[3][12] == "T"  # the edit was kept
 
 
-# --- undo ------------------------------------------------------------------------------------
+# --- undo, pass, update ---------------------------------------------------------------------
 
 
-def test_undo_restores_the_board_rack_and_turn(client: TestClient) -> None:
-    gid = _start(client)
-    before = _game(client, gid)
-    client.post(f"/game/{gid}/solve")
-    client.post(f"/game/{gid}/play/0")
-    assert _game(client, gid)["turns"]
-
+def test_undo_reopens_the_last_turn(client: TestClient, services: Services) -> None:
+    gid = started_game(client, phase="start_opponent")
+    _word(client, gid, "HAT", 8, 6, "down", "opponent")
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_opponent"))
+    assert len(services.game(gid).turns) == 2
     client.post(f"/game/{gid}/undo")
-    after = _game(client, gid)
-    assert after["turns"] == [] and after["phase"] == "my_turn"
-    assert after["board"] == before["board"] and after["rack"] == before["rack"]
-    assert after["scores"] == {"me": 0, "opponent": 0}
+    game = services.game(gid)
+    assert len(game.turns) == 1 and game.phase == "opponent_turn"
+    assert game.board[8][5] == "A"  # the tiles are back as an editable open turn
+    assert game.base_board[8][5] is None
+    assert game.open_player == "opponent" and game.scores()["opponent"] == 0
 
 
-def test_undo_an_opponent_move_from_the_grid(client: TestClient) -> None:
-    gid = _start(client)
-    _my_pass(client, gid)
-    client.post(f"/game/{gid}/board", data=_form({7: (5, "HELLO"), 8: (9, "X")}, "SATIRE?"))
-    client.post(f"/game/{gid}/pending", data={"action": "confirm_opponent"})
+def test_undo_the_start_goes_back_to_setup(client: TestClient, services: Services) -> None:
+    gid = started_game(client)
     client.post(f"/game/{gid}/undo")
-    g = _game(client, gid)
-    assert g["phase"] == "opponent_turn" and g["board"][8][9] is None
-    assert [t["kind"] for t in g["turns"]] == ["pass"]
+    game = services.game(gid)
+    assert game.started is False and game.turns == []
+    assert game.base_board[7][5] is None and game.board[7][5] == "H"
+    assert "Starting position" in client.get(f"/game/{gid}").text
 
 
-def test_nothing_to_undo(client: TestClient) -> None:
-    gid = _start(client)
-    r = client.post(f"/game/{gid}/undo")
-    assert r.status_code == 422 and "Nothing to undo" in r.text
-
-
-# --- drawing tiles and the bag ---------------------------------------------------------------
-
-
-def test_draw_prompt_and_adding_tiles(client: TestClient) -> None:
-    gid = _start(client)
-    client.post(f"/game/{gid}/solve")
-    client.post(f"/game/{gid}/play/0")
-    kept = _game(client, gid)["rack"]
-    client.post(f"/game/{gid}/pass", data={"who": "opponent"})  # their turn is over: back to me
-
-    page = client.get(f"/game/{gid}").text
-    assert "What did you draw?" in page
-    assert len(kept) < 7
-
-    need = 7 - len(kept)
-    r = client.post(f"/game/{gid}/draw", data={"letters": "Z" * need, "action": "add"},
-                    follow_redirects=False)  # fmt: skip
-    assert r.status_code == 303
-    assert _game(client, gid)["rack"] == kept + "Z" * need
-    assert "What did you draw?" not in client.get(f"/game/{gid}").text  # the rack is full
-
-    too_many = client.post(f"/game/{gid}/draw", data={"letters": "AB"})
-    assert too_many.status_code == 422 and "most is 7" in too_many.text
-
-
-def test_add_and_solve(client: TestClient) -> None:
-    gid = _start(client, rack="SAT")
+def test_pass_and_undo_pass(client: TestClient, services: Services) -> None:
+    gid = started_game(client)
     client.post(f"/game/{gid}/pass", data={"who": "me"})
-    client.post(f"/game/{gid}/pass", data={"who": "opponent"})
-    assert "What did you draw?" in client.get(f"/game/{gid}").text
-    client.post(f"/game/{gid}/draw", data={"letters": "IRE?", "action": "solve"})
-    g = _game(client, gid)
-    assert g["rack"] == "SATIRE?"
-    assert client.get(f"/game/{gid}").text.count("<tr") > 1  # a moves table
+    game = services.game(gid)
+    assert game.turns[-1].kind == "pass" and game.phase == "opponent_turn"
+    client.post(f"/game/{gid}/undo")
+    assert services.game(gid).phase == "my_turn"
 
 
-def test_bag_counts(client: TestClient) -> None:
-    gid = _start(client, rack="SATIRE?")
-    g = _game(client, gid)
-    assert g["in_bag"] == 104 - 5 - 7 - 7
-    assert g["unseen"]["E"] == 13 - 1 - 1 and g["unseen"]["?"] == 1
+def test_just_update_the_board_logs_a_board_update(client: TestClient, services: Services) -> None:
+    gid = started_game(client)
+    data = _current_form(services, gid, "accept")
+    data["c-8-5"], data["c-9-5"] = "A", "T"
+    client.post(f"/game/{gid}/board", data=data)
+    game = services.game(gid)
+    update = game.turns[-1]
+    assert (update.kind, update.tiles, update.points) == ("start", 2, 0)
+    assert game.phase == "my_turn" and game.base_board[9][5] == "T"
+    assert "Board updated" in client.get(f"/game/{gid}").text
 
 
-# --- saved games -----------------------------------------------------------------------------
+def test_drew_prompt_after_the_opponents_move(client: TestClient, services: Services) -> None:
+    gid = started_game(client, rack="SIRE", phase="start_opponent")
+    _word(client, gid, "HAT", 8, 6, "down", "opponent")
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_opponent"))
+    html = client.get(f"/game/{gid}").text
+    assert "What did you draw?" in html
+    client.post(f"/game/{gid}/draw", data={"letters": "XYZ", "action": "add"})
+    assert services.game(gid).rack == "SIREXYZ"
 
 
-def test_games_are_listed_renamed_and_deleted(client: TestClient, games_dir: Path) -> None:
-    gid = _start(client)
-    assert (games_dir / f"{gid}.json").exists()
-    home = client.get("/").text
-    assert gid in home and "Your games" in home and "Your turn" in home
-    assert client.get(f"{API}/games").json()["games"][0]["id"] == gid
-
-    client.post(f"/game/{gid}/rename", data={"name": "Kara, round 2"})
-    assert _game(client, gid)["name"] == "Kara, round 2"
-    assert "Kara, round 2" in client.get("/").text
-
-    r = client.post(f"/game/{gid}/delete", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/"
-    assert not (games_dir / f"{gid}.json").exists()
-    assert client.get(f"/game/{gid}").status_code == 404
+# --- pictures -------------------------------------------------------------------------------
 
 
-def test_games_survive_a_restart(games_dir: Path) -> None:
-    with TestClient(create_app(Settings(games_dir=games_dir))) as first:
-        gid = _start(first)
-        first.post(f"/game/{gid}/solve")
-        first.post(f"/game/{gid}/play/0")
-        first.post(f"/game/{gid}/pass", data={"who": "opponent"})
-        saved = _game(first, gid)
+def test_picture_turn_labels_the_picture_when_confirmed(
+    client: TestClient, services: Services, reader: FakeReader, retrains: list[int]
+) -> None:
+    gid = started_game(client, phase="start_opponent")
+    reader.next = reading({7: (5, "HELLO"), 8: (5, "A"), 9: (5, "T")}, "XYZ")
+    assert send_picture(client, gid).status_code == 303
+    game = services.game(gid)
+    assert len(game.pictures) == 1 and game.open_source == "picture"
+    assert game.rack == "XYZ" and len(game.turns) == 1
+    assert game.pictures[0].label_board is None  # not a label until the turn is confirmed
+    assert retrains == []
 
-    with TestClient(create_app(Settings(games_dir=games_dir))) as second:
-        again = _game(second, gid)
-        for key in ("name", "phase", "board", "rack", "scores", "turns", "in_bag"):
-            assert again[key] == saved[key], key
-        assert second.get(f"/game/{gid}").status_code == 200
-        # and the JSON session endpoints see it too
-        assert second.get(f"{API}/session/{gid}").json()["expires_in_s"] == -1
-        second.post(f"/game/{gid}/undo")  # takes back the opponent's pass
-        undone = _game(second, gid)
-        assert [t["kind"] for t in undone["turns"]] == ["play"] and undone[
-            "phase"
-        ] == "opponent_turn"
-
-
-def test_a_picture_is_kept_with_the_game(games_dir: Path, reader: FakeReader) -> None:
-    reader.next = _reading({7: (5, "HELLO")}, "ABCDEFG")
-    png = _png()
-    with TestClient(create_app(Settings(games_dir=games_dir), recognizer=reader)) as first:
-        r = first.post("/upload", files={"image": ("a.png", png, "image/png")},
-                       follow_redirects=False)  # fmt: skip
-        gid = r.headers["location"].rsplit("/", 1)[1]
-        assert (games_dir / f"{gid}.png").exists()
-    with TestClient(create_app(Settings(games_dir=games_dir), recognizer=reader)) as second:
-        assert second.get(f"{API}/session/{gid}/image").content == png
+    # the reader got a letter wrong; the user fixes it on the open turn, then confirms
+    data = _current_form(services, gid, "confirm_opponent")
+    data["c-9-5"] = "N"
+    client.post(f"/game/{gid}/board", data=data)
+    game = services.game(gid)
+    pic = game.pictures[0]
+    assert game.turns[-1].picture == pic.id and game.turns[-1].word == "HAN"
+    assert pic.label_board is not None and pic.label_board[9][5] == "N"
+    assert pic.read_board[9][5] == "T"  # what the reader had said is kept for comparison
+    assert pic.label_rack == "XYZ" and pic.label_turn == 2
+    assert retrains == [1]
+    assert f"/game/{gid}/picture/{pic.id}" in client.get(f"/game/{gid}").text
 
 
-def test_a_played_move_drops_the_stale_picture(client: TestClient, games_dir: Path,
-                                               reader: FakeReader) -> None:  # fmt: skip
-    reader.next = _reading({7: (5, "HELLO")}, "SATIRE?")
-    r = client.post("/upload", files={"image": ("a.png", _png(), "image/png")},
-                    follow_redirects=False)  # fmt: skip
-    gid = r.headers["location"].rsplit("/", 1)[1]
-    assert client.get(f"{API}/session/{gid}").json()["has_image"] is True
-    client.post(f"/game/{gid}/solve")
-    client.post(f"/game/{gid}/play/0")
-    assert client.get(f"{API}/session/{gid}").json()["has_image"] is False
-    assert not list(games_dir.glob(f"{gid}.png"))
+def test_typed_turns_do_not_label_pictures(
+    client: TestClient, services: Services, reader: FakeReader, retrains: list[int]
+) -> None:
+    gid = started_game(client, phase="start_opponent")
+    reader.next = reading({7: (5, "HELLO")}, "ABC")  # a picture with nothing new
+    send_picture(client, gid)
+    _word(client, gid, "HAT", 8, 6, "down", "opponent")
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_opponent"))
+    assert services.game(gid).pictures[0].label_board is None and retrains == []
 
 
-def test_game_file_is_plain_json(client: TestClient, games_dir: Path) -> None:
-    gid = _start(client)
-    data = json.loads((games_dir / f"{gid}.json").read_text())
-    assert (
-        data["version"] == 1 and data["board"][7] == ".....HELLO....." and data["rack"] == "SATIRE?"
-    )
-    assert len(data["board"]) == 15 and data["phase"] == "my_turn"
+def test_starting_from_a_picture_labels_it(
+    client: TestClient, services: Services, reader: FakeReader, retrains: list[int]
+) -> None:
+    gid = new_game(client)
+    reader.next = reading({7: (5, "HELLO")}, "ABCDEFG")
+    send_picture(client, gid, source="upload")
+    assert services.game(gid).pictures[0].source == "upload"
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "start_me"))
+    pic = services.game(gid).pictures[0]
+    assert pic.label_board is not None and pic.label_board[7][5:10] == "HELLO"
+    assert retrains == [1]
 
 
-def test_unknown_game(client: TestClient) -> None:
-    assert client.get(f"{API}/games/nope").status_code == 404
-    assert client.get("/game/nope").status_code == 404
+def test_next_picture_keeps_locked_tiles_and_reads_the_rest(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = started_game(client)
+    # HELLO misread as HELLS (confidently) plus a new word down from the H
+    reader.next = reading({7: (5, "HELLS"), 8: (5, "A"), 9: (5, "T")}, "XYZ")
+    send_picture(client, gid)
+    game = services.game(gid)
+    assert game.board[7][5:10] == list("HELLO")  # locked, not replaced by the misread S
+    assert game.board[8][5] == "A" and game.board[9][5] == "T"
+    rec = game.recognition
+    assert rec is not None and (rec.kept_from_previous, rec.new_tiles, rec.conflicts) == (5, 2, 1)
+    assert reader.calls[-1]["previous"][7][5:10] == list("HELLO")  # type: ignore[index]
+    page = _text(client.get(f"/game/{gid}"))
+    assert "looked different in the new picture" in page and "undo" in page
+
+
+def test_retaking_replaces_the_open_tiles(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = started_game(client)
+    reader.next = reading({7: (5, "HELLO"), 8: (5, "A")}, "XYZ")
+    send_picture(client, gid)
+    reader.next = reading({7: (5, "HELLO"), 8: (7, "L")}, "XYZ")  # the second picture
+    send_picture(client, gid)
+    game = services.game(gid)
+    assert game.board[8][5] is None and game.board[8][7] == "L"
+    assert len(game.pictures) == 2
+
+
+def test_refused_picture_changes_nothing_and_is_not_kept(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = started_game(client)
+    before = services.game(gid)
+    board, rack = [row[:] for row in before.board], before.rack
+    refused = reading({}, "")
+    refused.rejected = refused.merged = True
+    refused.warnings = ["picture_does_not_match"]
+    refused.match = 0.55
+    reader.next = refused
+    send_picture(client, gid)
+    after = services.game(gid)
+    assert after.board == board and after.rack == rack and after.pictures == []
+    page = _text(client.get(f"/game/{gid}"))
+    assert "doesn't look like this game's board" in page and "55%" in page
+    assert "doesn't look like this game's board" not in _text(client.get(f"/game/{gid}"))
+
+
+def test_unreadable_rack_leaves_yours_alone(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = started_game(client)
+    cut = reading({7: (5, "HELLO"), 8: (5, "A")}, "")
+    cut.merged = True
+    cut.warnings = ["rack_cut_off"]
+    reader.next = cut
+    send_picture(client, gid)
+    game = services.game(gid)
+    assert game.rack == "SATIRE?" and game.board[8][5] == "A"
+    assert "rack is partly outside the picture" in _text(client.get(f"/game/{gid}"))
+
+
+def test_game_page_shows_only_the_last_few_pictures(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = started_game(client)
+    reader.next = reading({7: (5, "HELLO")}, "ABC")
+    for _ in range(6):
+        send_picture(client, gid)
+    html = client.get(f"/game/{gid}").text
+    assert html.count('class="pic"') == 4 and "The last 4 of 6 pictures" in html
+
+
+# --- persistence ----------------------------------------------------------------------------
+
+
+def test_game_round_trips_through_disk(
+    client: TestClient, services: Services, reader: FakeReader, games_dir: Path
+) -> None:
+    gid = started_game(client, phase="start_opponent")
+    reader.next = reading({7: (5, "HELLO"), 8: (5, "A"), 9: (5, "T")}, "XYZ")
+    send_picture(client, gid)
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_opponent"))
+    client.post(f"/game/{gid}/rename", data={"name": "Round 2"})
+
+    again = GameStore(games_dir).get(gid)
+    assert again is not None and again.name == "Round 2"
+    live = services.game(gid)
+    assert again.board == live.board and again.base_board == live.base_board
+    assert [t.word for t in again.turns] == [t.word for t in live.turns]
+    assert again.pictures[0].label_board == live.pictures[0].label_board
+    assert GameStore(games_dir).picture_bytes(again, again.pictures[0])
+
+    client.post(f"/game/{gid}/delete")
+    assert not (games_dir / f"{gid}.json").exists() and not (games_dir / gid).exists()
+
+
+def test_home_lists_games(client: TestClient) -> None:
+    gid = started_game(client)
+    html = client.get("/").text
+    assert f"/game/{gid}" in html and "Your games" in html
+
+
+def test_old_games_keep_their_single_picture(games_dir: Path, png_bytes: bytes) -> None:
+    import json
+
+    games_dir.mkdir()
+    rows = ["." * 15] * 15
+    (games_dir / "abc.json").write_text(json.dumps({
+        "version": 1, "id": "abc", "name": "Old", "phase": "my_turn", "solver_id": "anchor_trie",
+        "params": {}, "dictionary_id": "words", "board": rows, "base_board": rows, "rack": "AB",
+        "turns": [], "image_file": "abc.png", "image_type": "image/png",
+    }))  # fmt: skip
+    (games_dir / "abc.png").write_bytes(png_bytes)
+    store = GameStore(games_dir)
+    game = store.get("abc")
+    assert game is not None and len(game.pictures) == 1 and game.started is False
+    assert store.picture_bytes(game, game.pictures[0]) == png_bytes
+    assert not (games_dir / "abc.png").exists()
+    assert GameStore(games_dir).get("abc").pictures[0].file == "p1.png"  # type: ignore[union-attr]
+
+
+def test_game_pictures_become_training_examples(
+    client: TestClient, services: Services, reader: FakeReader, games_dir: Path
+) -> None:
+    from wwf.vision.train import load_game_examples
+
+    gid = new_game(client)
+    reader.next = reading({7: (5, "HELLO")}, "ABCDEFG")
+    send_picture(client, gid)
+    assert load_game_examples(games_dir) == []  # not confirmed: no label yet
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "start_me"))
+    (example,) = load_game_examples(games_dir)
+    assert example.board[7][5:10] == "HELLO" and example.rack == "ABCDEFG"

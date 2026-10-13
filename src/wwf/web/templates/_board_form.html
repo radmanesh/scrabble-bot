@@ -1,5 +1,8 @@
 <form id="board-form" class="card board-card" action="/game/{{ game.id }}/board" method="post" autocomplete="off">
   <h2>Board</h2>
+  {% if game.started and locked %}<p class="hint small">Squares from confirmed turns are locked
+    (grey). Only the open turn's tiles can be edited{% if game.turns | length > 1 %}; use
+    <b>Undo last turn</b> below to change a confirmed one{% endif %}.</p>{% endif %}
   {% if saved %}<p class="notice ok">Saved.</p>{% endif %}
   {% if notice %}
   <div class="notice error" role="alert">
@@ -42,11 +45,12 @@
   {% set unsure = needs_review | map('select') | map('list') | map('length') | sum %}
   {% if recognition and recognition.kept_from_previous %}
   <p class="notice {{ 'ok' if unsure == 0 else '' }}">Kept the {{ recognition.kept_from_previous }}
-    tiles already on the board{% if recognition.geometry %} and read {{ recognition.new_tiles }}
+    confirmed tiles{% if recognition.geometry %} and read {{ recognition.new_tiles }}
     new one{{ 's' if recognition.new_tiles != 1 }}{% endif %}.
     {% if recognition.conflicts %}<b>{{ recognition.conflicts }}</b> kept
-    tile{{ 's' if recognition.conflicts != 1 }} looked different in the new picture (amber):
-    check {{ 'them' if recognition.conflicts != 1 else 'it' }}.{% endif %}
+    locked tile{{ 's' if recognition.conflicts != 1 }} looked different in the new picture (amber).
+    Locked tiles can't be edited: if {{ 'they are' if recognition.conflicts != 1 else 'it is' }}
+    really wrong, undo back to that turn.{% endif %}
     {% if not recognition.geometry %}Couldn't find the board in the new picture, so nothing new
     was read: type the new tiles in, or take the picture again.{% endif %}
     {% if unsure and not recognition.conflicts %}<b>{{ unsure }}</b> square{{ 's' if unsure != 1 }}
@@ -67,14 +71,14 @@
     of those tiles is probably a blank. Type it in lowercase.</p>
   {% endif %}
 
-  {% if game.image %}
+  {% if latest_picture %}
   <details class="shot-details small">
-    <summary>The picture{% if board_image_url %} (straightened){% endif %}</summary>
-    {% if board_image_url %}
-    <img class="board-shot" src="{{ board_image_url }}" alt="The board from the picture, straightened">
+    <summary>The latest picture{% if has_quad %} (straightened){% endif %}</summary>
+    {% if has_quad %}
+    <img class="board-shot" src="/game/{{ game.id }}/picture/{{ latest_picture.id }}/board.png" alt="The board from the picture, straightened">
     {% endif %}
     <div class="shot-frame">
-      <img src="/api/v1/session/{{ game.id }}/image" alt="The picture of the board">
+      <img src="/game/{{ game.id }}/picture/{{ latest_picture.id }}" alt="The picture of the board">
       {% if recognition and recognition.geometry %}
       {% set g = recognition.geometry %}
       <svg class="overlay" viewBox="0 0 {{ g.image_width }} {{ g.image_height }}" preserveAspectRatio="none" aria-hidden="true">
@@ -91,8 +95,8 @@
     <div class="board-row" role="row">
       {% for c in range(size) %}
       {% set v = board[r][c] or "" %}
-      <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in pending_positions %} pending{% endif %}{% if (r, c) in problem_squares %} contradiction{% endif %}{% if v and v.islower() %} blank{% endif %}"
-             name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"
+      <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in open_tiles and game.started %} pending{% endif %}{% if (r, c) in locked %} locked{% endif %}{% if v and v.islower() %} blank{% endif %}"
+             name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"{% if (r, c) in locked %} readonly tabindex="-1"{% endif %}
              data-r="{{ r }}" data-c="{{ c }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
              autocapitalize="characters" spellcheck="false" inputmode="text"
              aria-label="Row {{ r + 1 }} column {{ c + 1 }}{% if bonus_label[r][c] %}, {{ bonus_label[r][c] }}{% endif %}">
@@ -110,24 +114,11 @@
   </div>
   <p class="hint small">Use <span class="kbd">?</span> for a blank on your rack.</p>
 
-  {% if labelling %}
-  <div class="fixture-label">
-    <p class="small">Labelling fixture <code>{{ game.fixture_name }}</code>. Enter exactly what
-      the picture shows, including the rack.
-      {% if game.fixture_status == "draft" %}<br><b>This board was filled in automatically:</b>
-      check it against the picture, especially the amber squares, before saving.{% endif %}</p>
-  </div>
-  {% endif %}
   <div class="actions">
     <button type="button" id="blank-toggle" class="js-only" hidden>Blank</button>
-    {% if labelling %}
-    <button type="submit" name="action" value="fixture" class="primary">Save label</button>
-    <button type="submit" name="action" value="solve">Save label and solve</button>
-    {% elif game.phase == "my_turn" %}
     <button type="submit" name="action" value="save">Save</button>
+    {% if game.started and game.phase == "my_turn" and not open_tiles %}
     <button type="submit" name="action" value="solve" class="primary">Save and solve</button>
-    {% else %}
-    <button type="submit" name="action" value="save" class="primary">Save</button>
     {% endif %}
   </div>
 </form>

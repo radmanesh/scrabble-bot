@@ -1,11 +1,15 @@
 """Build the reader model from labelled fixtures, and measure it honestly.
 
-    uv run python -m wwf.vision.train              # build assets/models/reader.npz
+    uv run python -m wwf.vision.train              # build assets/models/reader.npz from
+                                                   # assets/archive/ and data/games/
     uv run python -m wwf.vision.train --evaluate   # hold out each game position in turn
     uv run python -m wwf.vision.train --check      # list labels the pictures contradict
 
-Pictures are used when their label is "verified", or when `same_position.json` says they show the
-position of a verified picture. Photos of the same position (identical board) are held out
+Two sources: `assets/archive/` (pictures labelled before games kept their own pictures: an image
+plus a JSON label each) and `data/games/` (every picture of a saved game whose turn was
+confirmed carries the confirmed board as its label). In the archive, pictures are used when their
+label is "verified", or when `same_position.json` says they show the position of a verified
+picture. Photos of the same position (identical board) are held out
 together, so evaluation never tests on a board it trained on.
 """
 
@@ -23,7 +27,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from wwf.core.config import BoardConfig, assets_dir, load_board_config
+from wwf.core.config import BoardConfig, assets_dir, load_board_config, project_root
 from wwf.vision.board import BoardFit, find_boards, visible_mask
 from wwf.vision.occupancy import Measures, OccupancyModel, measure
 from wwf.vision.pipeline import DEFAULT_MODEL
@@ -39,7 +43,7 @@ from wwf.vision.reader import (
 )
 from wwf.vision.synth import synthetic_tiles
 
-DEFAULT_FIXTURES = assets_dir() / "fixtures"
+DEFAULT_FIXTURES = assets_dir() / "archive"
 ALIASES_FILE = "same_position.json"
 # A square whose label the picture contradicts this strongly is reported as a label problem and
 # left out of training and scoring.
@@ -106,6 +110,44 @@ def load_examples(directory: Path) -> list[Example]:
             Example(name, image, list(board), rack, quad if isinstance(quad, list) else None)  # type: ignore[arg-type]
         )
     return out
+
+
+def load_game_examples(games_dir: Path) -> list[Example]:
+    """Pictures of saved games whose turn was confirmed: the confirmed board is the label."""
+    out: list[Example] = []
+    for path in sorted(games_dir.glob("*.json")):
+        try:
+            game = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        for pic in game.get("pictures", []):
+            board = pic.get("label_board")
+            if not board:
+                continue
+            image = cv2.imread(str(games_dir / str(game.get("id", path.stem)) / str(pic["file"])))
+            if image is None:
+                continue
+            quad = pic.get("quad")
+            out.append(
+                Example(
+                    f"{path.stem[:8]}-{pic['id']}",
+                    image,
+                    list(board),
+                    pic.get("label_rack"),
+                    quad if isinstance(quad, list) else None,
+                )
+            )
+    return out
+
+
+def load_all_examples(archive: Path | None, games_dir: Path | None) -> list[Example]:
+    """The archive's labelled pictures plus those kept with saved games."""
+    examples: list[Example] = []
+    if archive is not None and archive.is_dir():
+        examples += load_examples(archive)
+    if games_dir is not None and games_dir.is_dir():
+        examples += load_game_examples(games_dir)
+    return examples
 
 
 def _jitter(crop: np.ndarray, rng: np.random.Generator) -> np.ndarray:
@@ -223,12 +265,12 @@ def build_model_and_issues(
     return model, issues
 
 
-def train_from_fixtures(
-    directory: Path, cfg: BoardConfig, out: Path
+def train_from_sources(
+    archive: Path | None, games_dir: Path | None, cfg: BoardConfig, out: Path
 ) -> tuple[ReaderModel, list[LabelIssue]] | None:
-    """Rebuild and save the model from a fixtures folder, with the label problems found.
-    None if nothing is labelled yet."""
-    examples = load_examples(directory)
+    """Rebuild and save the model from the archive and the games' pictures, with the label
+    problems found. None if nothing is labelled yet."""
+    examples = load_all_examples(archive, games_dir)
     if not examples:
         return None
     model, issues = build_model_and_issues(examples, cfg)
@@ -259,9 +301,11 @@ def picture_issues(
     return out
 
 
-def label_issues(directory: Path, cfg: BoardConfig) -> list[LabelIssue]:
+def label_issues(
+    directory: Path, cfg: BoardConfig, games_dir: Path | None = None
+) -> list[LabelIssue]:
     """Squares where a label and its picture strongly disagree (usually a typing slip)."""
-    examples = load_examples(directory)
+    examples = load_all_examples(directory, games_dir)
     if not examples:
         return []
     return build_model_and_issues(examples, cfg, augment=0, synthetic=False)[1]
@@ -366,20 +410,23 @@ def evaluate(examples: list[Example], cfg: BoardConfig, synthetic: bool = True) 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES)
+    parser.add_argument("--fixtures", type=Path, default=DEFAULT_FIXTURES, help="the archive")
+    parser.add_argument(
+        "--games", type=Path, default=project_root() / "data" / "games", help="saved games"
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--evaluate", action="store_true", help="leave-one-position-out test")
     parser.add_argument("--check", action="store_true", help="list labels the pictures contradict")
     parser.add_argument("--no-synthetic", action="store_true", help="skip font-rendered letters")
     args = parser.parse_args()
     cfg = load_board_config()
-    examples = load_examples(args.fixtures)
+    examples = load_all_examples(args.fixtures, args.games)
     print(
         f"{len(examples)} labelled pictures, "
         f"{len({e.position for e in examples})} distinct positions"
     )
     if args.check:
-        issues = label_issues(args.fixtures, cfg)
+        issues = label_issues(args.fixtures, cfg, args.games)
         for i in issues:
             what = "empty" if i.label == "." else repr(i.label)
             print(

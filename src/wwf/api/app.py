@@ -22,7 +22,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from wwf.api.schemas import HealthResponse
 from wwf.api.services import ApiError, Recognizer, Services, Settings
-from wwf.api.session import SessionStore
 from wwf.core.config import assets_dir, load_board_config, project_root
 from wwf.core.dictionary import DictionaryRegistry, default_dictionary_registry
 from wwf.solvers.registry import SolverRegistry, load_registry
@@ -65,18 +64,16 @@ def create_app(
     *,
     solvers: SolverRegistry | None = None,
     dictionaries: DictionaryRegistry | None = None,
-    sessions: SessionStore | None = None,
     recognizer: Recognizer | None = None,
 ) -> FastAPI:
     if settings is None:
         # The real server (wwf-serve): read pictures with the trained board reader. Tests pass
         # their own Settings and so never load or retrain the real model.
-        fixtures = os.environ.get("WWF_FIXTURES_DIR")
         games = os.environ.get("WWF_GAMES_DIR")
         settings = Settings(
-            fixtures_dir=Path(fixtures) if fixtures else None,
             model_path=assets_dir() / "models" / "reader.npz",
             games_dir=Path(games) if games else project_root() / "data" / "games",
+            archive_dir=assets_dir() / "archive",
         )
     cfg = load_board_config()
     if recognizer is None and settings.model_path is not None:
@@ -87,7 +84,6 @@ def create_app(
         cfg=cfg,
         solvers=load_registry() if solvers is None else solvers,
         dictionaries=default_dictionary_registry() if dictionaries is None else dictionaries,
-        sessions=SessionStore(settings.session_ttl_s) if sessions is None else sessions,
         settings=settings,
         recognizer=recognizer,
     )
@@ -97,22 +93,9 @@ def create_app(
         svc.dictionaries.get()  # load (or read the cache of) the default dictionary up front
         executor = ThreadPoolExecutor(settings.worker_threads, thread_name_prefix="wwf")
         app.state.executor = executor
-        if svc.fixtures is not None and svc.recognizer is not None:
-            executor.submit(svc.draft_unlabelled_fixtures)  # pictures taken before the reader
-            executor.submit(svc.refresh_label_problems)
-
-        async def sweep() -> None:
-            while True:
-                await asyncio.sleep(60)
-                removed = svc.sessions.sweep() + svc.games.sweep()
-                if removed:
-                    log.info("swept %d expired sessions", removed)
-
-        task = asyncio.create_task(sweep())
         try:
             yield
         finally:
-            task.cancel()
             app.state.executor = None
             executor.shutdown(wait=False, cancel_futures=True)
 
@@ -167,22 +150,11 @@ def create_app(
             dictionary_id=did,
             dictionary_words=len(svc.dictionaries.get(did)),
             model_loaded=svc.recognizer is not None,
-            sessions=len(svc.sessions),
+            games=len(svc.games),
         )
 
-    from wwf.api import (
-        routes_game_pages,
-        routes_games,
-        routes_options,
-        routes_recognize,
-        routes_solve,
-        routes_web,
-    )
+    from wwf.api import routes_game_pages, routes_web
 
-    app.include_router(routes_recognize.router, prefix=API_PREFIX)
-    app.include_router(routes_solve.router, prefix=API_PREFIX)
-    app.include_router(routes_options.router, prefix=API_PREFIX)
-    app.include_router(routes_games.router, prefix=API_PREFIX)
     app.include_router(routes_web.router)
     app.include_router(routes_game_pages.router)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
@@ -196,18 +168,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 to reach it from a phone")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true", help="restart on code changes")
-    parser.add_argument(
-        "--collect-fixtures",
-        nargs="?",
-        const=str(assets_dir() / "fixtures"),
-        metavar="DIR",
-        help="save every picture as a test fixture (default dir: assets/fixtures) and add a "
-        "Fixtures page for labelling them",
-    )
     args = parser.parse_args()
-    if args.collect_fixtures:
-        # uvicorn builds the app in its own call to create_app, so pass the setting by env
-        os.environ["WWF_FIXTURES_DIR"] = str(Path(args.collect_fixtures).resolve())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     uvicorn.run(
         "wwf.api.app:create_app", factory=True, host=args.host, port=args.port, reload=args.reload

@@ -1,7 +1,9 @@
-"""The game page and its actions: solve, play, enter the opponent's move, undo, next picture.
+"""The game page and its actions.
 
-One page per game (`/game/{id}`) shows whatever the current turn needs. Every action is a plain
-POST that redirects back, so it all works without JavaScript.
+One page per game (`/game/{id}`) shows whatever the game needs next: set up the starting
+position, then each turn's open tiles (editable until confirmed), the suggestions, the word
+entry and the pictures. Every action is a plain POST that redirects back, so it all works
+without JavaScript.
 """
 
 from __future__ import annotations
@@ -9,26 +11,27 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, Response
 
 from wwf.api import gameplay
+from wwf.api.app import run_blocking
 from wwf.api.app import services as get_services
 from wwf.api.gameplay import MoveRejected, Pending
 from wwf.api.games import Game
-from wwf.api.routes_recognize import read_upload
-from wwf.api.routes_solve import solve_session
 from wwf.api.routes_web import (
-    _board_image_url,
     _parse_board_form,
     _redirect,
     _render,
-    _take_picture,
-    _upload_error,
+    picture_source,
+    read_upload,
+    upload_error,
 )
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK
 from wwf.api.services import ApiError, Services
+from wwf.vision.perspective import warp_board_png
 
 router = APIRouter(include_in_schema=False)
+RECENT_PICTURES = 4
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -69,7 +72,6 @@ def _pending_view(svc: Services, game: Game, pending: Pending | None) -> dict[st
         "direction": a.move.direction.value,
         "start": (a.move.start[0] + 1, a.move.start[1] + 1),
         "tiles": len(pending.placements),
-        "changed": pending.changed,
         "points": score.total if score else None,
         "words": [(w.word, w.points) for w in score.words] if score else [],
         "bingo": score.bingo_bonus if score else 0,
@@ -81,7 +83,8 @@ def _pending_view(svc: Services, game: Game, pending: Pending | None) -> dict[st
 
 def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLResponse:
     svc = get_services(request)
-    pending = gameplay.pending_move(svc, game)
+    pending = gameplay.pending_move(svc, game) if game.started else None
+    open_tiles = gameplay.open_positions(game)
     bag = gameplay.bag_for(svc, game)
     rec = game.recognition
     last = game.last_turn()
@@ -104,16 +107,18 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
     ctx.setdefault("errors", [])
     ctx.setdefault("form_values", {"word": "", "row": "", "col": "", "direction": "across"})
     ctx.setdefault("force_offer", False)
+    latest = game.latest_picture
+    pictures = list(reversed(game.pictures[-RECENT_PICTURES:]))
     return _render(
         request,
         "game.html",
         status,
         game=game,
-        session=game,  # the shared top bar links Options to the current game
         recognition=rec,
         needs_review=rec.needs_review if rec else [[False] * BOARD_SIZE] * BOARD_SIZE,
         pending=_pending_view(svc, game, pending),
-        pending_positions=pending.positions if pending else set(),
+        open_tiles=open_tiles,
+        locked={(r, c) for r, row in enumerate(game.base_board) for c, ch in enumerate(row) if ch},
         scores=game.scores(),
         bag=bag,
         suspects=suspects,
@@ -122,13 +127,21 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         result=result,
         solver_name=svc.solvers.info(result.solver_id).display_name if result else "",
         selected=selected,
-        step=3 if game.phase == "opponent_turn" else (2 if result and result.moves else 1),
-        labelling=svc.fixtures is not None and game.ephemeral and bool(game.fixture_name),
-        problem_squares={(r, c): says for r, c, says in game.label_problems},
-        board_image_url=_board_image_url(svc, game),
+        latest_picture=latest,
+        pictures=pictures,
+        picture_count=len(game.pictures),
+        has_quad=bool(latest and latest.quad),
         turns=list(reversed(game.turns)),
+        open_player=game.open_player or game.player_to_move,
         **ctx,
     )
+
+
+def _finish(request: Request, game: Game, labelled: bool = False) -> Response:
+    _save(request, game)
+    if labelled:
+        get_services(request).schedule_retrain()  # learn from the confirmed picture
+    return _redirect(f"/game/{game.id}")
 
 
 # --- the page --------------------------------------------------------------------------------
@@ -138,13 +151,6 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
 def game_page(request: Request, game_id: str, saved: int = 0) -> HTMLResponse:
     game = _game_or_page(request, game_id)
     return game if isinstance(game, HTMLResponse) else _page(request, game, saved=bool(saved))
-
-
-@router.get("/review/{game_id}")
-@router.get("/results/{game_id}")
-def old_links(game_id: str) -> RedirectResponse:
-    """The earlier Review and Results pages are now one game page."""
-    return _redirect(f"/game/{game_id}")
 
 
 @router.get("/game/{game_id}/preview/{n}", response_class=HTMLResponse)
@@ -161,38 +167,66 @@ def preview(request: Request, game_id: str, n: int) -> Response:
     )  # fmt: skip
 
 
-# --- the board and solving -------------------------------------------------------------------
+# --- the board form: save, solve, confirm ------------------------------------------------------
+
+
+async def solve_game(request: Request, svc: Services, game: Game) -> None:
+    timeout = svc.settings.solve_timeout_s
+    try:
+        await run_blocking(request, svc.solve, game, timeout=timeout)
+    except TimeoutError:
+        # Solvers are not interruptible, so there is nothing partial to return yet.
+        raise ApiError(504, "solve_timeout", {"timeout_s": timeout}) from None
 
 
 @router.post("/game/{game_id}/board")
 async def board_submit(request: Request, game_id: str) -> Response:
+    """Everything the board form can do: the squares and rack on the page are taken first
+    (squares of confirmed turns are ignored), then the action runs."""
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
     svc = get_services(request)
     form = await request.form()
+    action = str(form.get("action", "save"))
+    if action == "cancel":
+        gameplay.cancel_turn(game)
+        return _finish(request, game)
     board, rack_cells, rack, errors = _parse_board_form(form)
     if errors:
         return _page(request, game, 422, board=board, rack=rack_cells, errors=errors)
-    svc.set_board(game, board, rack)
-    action = form.get("action")
-    if svc.fixtures is not None and game.ephemeral and game.fixture_name:
-        # labelling a fixture: every save writes the label file, so nothing typed is lost
-        svc.fixtures.write_label(game.fixture_name, board, rack)
-        svc.schedule_retrain()  # learn from the corrected label
-        if action != "solve":
-            return _redirect(f"/fixtures?labelled={game.fixture_name}")
-    if action == "solve":
-        if not rack:
-            _save(request, game)
-            return _page(request, game, 422, errors=["Enter your rack tiles before solving."])
-        try:
-            await solve_session(request, svc, game)
-        except ApiError as e:
-            _save(request, game)
-            return _page(request, game, e.status, errors=[_solve_error(e)])
+    gameplay.apply_edit(game, board, rack)
+    label = svc.dictionaries.info(game.dictionary_id).label
+    labelled = False
+    try:
+        if action == "solve":
+            if not rack:
+                raise MoveRejected(["empty_rack"])
+            await solve_game(request, svc, game)
+        elif action in ("start_me", "start_opponent"):
+            turn = gameplay.start_game(game, "my_turn" if action == "start_me" else "opponent_turn")
+            labelled = bool(gameplay.labelled_pictures(game, turn))
+        elif action in ("confirm_me", "confirm_opponent"):
+            who = "me" if action == "confirm_me" else "opponent"
+            turn = gameplay.confirm_turn(svc, game, who, force=bool(form.get("force")))
+            labelled = bool(gameplay.labelled_pictures(game, turn))
+        elif action == "accept":
+            turn = gameplay.accept_board(game)
+            labelled = bool(gameplay.labelled_pictures(game, turn))
+    except MoveRejected as e:
+        _save(request, game)
+        problems = [
+            "Enter your rack tiles before solving." if p == "empty_rack"
+            else gameplay.explain(p, label) for p in e.problems
+        ]  # fmt: skip
+        return _page(request, game, 422, errors=problems)
+    except ApiError as e:
+        _save(request, game)
+        return _page(request, game, e.status, errors=[_solve_error(e)])
     _save(request, game)
-    return _redirect(f"/game/{game.id}" + ("" if action == "solve" else "?saved=1"))
+    if labelled:
+        svc.schedule_retrain()
+    return _redirect(f"/game/{game.id}" + ("?saved=1" if action == "save" else ""))
 
 
 @router.post("/game/{game_id}/solve")
@@ -203,11 +237,10 @@ async def solve_again(request: Request, game_id: str) -> Response:
     if not game.rack:
         return _page(request, game, 422, errors=["Enter your rack tiles before solving."])
     try:
-        await solve_session(request, get_services(request), game)
+        await solve_game(request, get_services(request), game)
     except ApiError as e:
         return _page(request, game, e.status, errors=[_solve_error(e)])
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    return _finish(request, game)
 
 
 @router.post("/game/{game_id}/draw")
@@ -224,42 +257,44 @@ async def draw(
         return _page(request, game, 422, errors=[str(e)])
     if action == "solve":
         try:
-            await solve_session(request, get_services(request), game)
+            await solve_game(request, get_services(request), game)
         except ApiError as e:
             _save(request, game)
             return _page(request, game, e.status, errors=[_solve_error(e)])
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    return _finish(request, game)
 
 
-# --- turns -----------------------------------------------------------------------------------
+# --- putting a move on the board -------------------------------------------------------------
 
 
 @router.post("/game/{game_id}/play/{n}")
 def play(request: Request, game_id: str, n: int) -> Response:
+    """Put a suggestion on the board as the open turn. It is confirmed separately."""
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
     try:
-        gameplay.play_solver_move(game, n)
+        gameplay.apply_solver_move(game, n)
+    except MoveRejected as e:
+        return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
     except ApiError:
         return _page(
             request, game, 422, errors=["That move isn't available any more: solve again."]
         )
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    return _finish(request, game)
 
 
-@router.post("/game/{game_id}/opponent")
-def opponent_move(
+@router.post("/game/{game_id}/word")
+def typed_word(
     request: Request,
     game_id: str,
     word: str = Form(""),
     row: str = Form(""),
     col: str = Form(""),
     direction: str = Form("across"),
-    force: str = Form(""),
+    player: str = Form("opponent"),
 ) -> Response:
+    """Put a typed word on the board as the open turn, for you or the opponent."""
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
@@ -276,38 +311,13 @@ def opponent_move(
         return _page(request, game, 422, form_values=values, errors=[msg])
     label = svc.dictionaries.info(game.dictionary_id).label
     try:
-        gameplay.play_typed_move(svc, game, "opponent", word, r, c, direction, force=bool(force))
+        gameplay.apply_typed_move(
+            svc, game, "me" if player == "me" else "opponent", word, r, c, direction
+        )
     except MoveRejected as e:
-        return _page(request, game, 422, form_values=values, force_offer=e.forceable,
+        return _page(request, game, 422, form_values=values,
                      errors=[gameplay.explain(p, label) for p in e.problems])  # fmt: skip
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
-
-
-@router.post("/game/{game_id}/pending")
-def pending_action(
-    request: Request, game_id: str, action: str = Form(...), force: str = Form("")
-) -> Response:
-    """Do something with the new tiles found on the board: log them, or just accept them."""
-    game = _game_or_page(request, game_id)
-    if isinstance(game, HTMLResponse):
-        return game
-    svc = get_services(request)
-    if action == "accept":
-        gameplay.accept_board(game)
-    elif action in ("confirm_opponent", "confirm_me"):
-        player = "opponent" if action == "confirm_opponent" else "me"
-        label = svc.dictionaries.info(game.dictionary_id).label
-        try:
-            gameplay.confirm_pending(svc, game, player, force=bool(force))
-        except MoveRejected as e:
-            return _page(
-                request, game, 422, errors=[gameplay.explain(p, label) for p in e.problems]
-            )
-    else:
-        return _page(request, game, 422, errors=["Unknown action."])
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    return _finish(request, game)
 
 
 @router.post("/game/{game_id}/pass")
@@ -315,13 +325,16 @@ def pass_turn(request: Request, game_id: str, who: str = Form("opponent")) -> Re
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
-    gameplay.pass_turn(game, "me" if who == "me" else "opponent")
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    try:
+        gameplay.pass_turn(game, "me" if who == "me" else "opponent")
+    except MoveRejected as e:
+        return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
+    return _finish(request, game)
 
 
 @router.post("/game/{game_id}/undo")
 def undo(request: Request, game_id: str) -> Response:
+    """Reopen the last confirmed turn."""
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
@@ -329,37 +342,54 @@ def undo(request: Request, game_id: str) -> Response:
         gameplay.undo(game)
     except ApiError:
         return _page(request, game, 422, errors=["Nothing to undo."])
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    return _finish(request, game)
 
 
-# --- the next picture ------------------------------------------------------------------------
+# --- pictures --------------------------------------------------------------------------------
 
 
 @router.post("/game/{game_id}/image")
 async def next_picture(
     request: Request, game_id: str, image: UploadFile = File(...), source: str = Form("photo")
 ) -> Response:
-    """Read a new picture. Tiles already on the board are kept; only new ones are read."""
+    """Read a picture into the open turn. Confirmed tiles are kept; the rest is read."""
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
     svc = get_services(request)
-    # start from the board as it is on the page now (the browser sends the grid along, so
-    # unsaved corrections count), else as last saved
-    previous = game.board
-    form = await request.form()
-    if "c-0-0" in form:
-        grid, _, _, errors = _parse_board_form(form)
-        if not errors:
-            previous = grid
     try:
         data = await read_upload(svc, image)
-        await _take_picture(request, svc, game, data, source, previous)
+        content_type = svc.check_image(data)
+        await run_blocking(
+            request, svc.attach_picture, game, data, content_type,
+            picture_source(source, content_type),
+        )  # fmt: skip
     except ApiError as e:
-        return _page(request, game, e.status, errors=[_upload_error(e)])
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+        return _page(request, game, e.status, errors=[upload_error(e)])
+    return _finish(request, game)
+
+
+@router.get("/game/{game_id}/picture/{picture_id}", response_class=Response)
+def picture_file(request: Request, game_id: str, picture_id: str) -> Response:
+    svc = get_services(request)
+    game = svc.games.get(game_id)
+    found = svc.picture(game, picture_id) if game is not None else None
+    if found is None:
+        raise ApiError(404, "picture_not_found", {"picture": picture_id})
+    pic, data = found
+    return Response(data, media_type=pic.content_type, headers={"Cache-Control": "private"})
+
+
+@router.get("/game/{game_id}/picture/{picture_id}/board.png", response_class=Response)
+def picture_board(request: Request, game_id: str, picture_id: str) -> Response:
+    """The board in the picture, straightened with the corners the reader found."""
+    svc = get_services(request)
+    game = svc.games.get(game_id)
+    found = svc.picture(game, picture_id) if game is not None else None
+    if found is None or not found[0].quad:
+        raise ApiError(404, "picture_not_found", {"picture": picture_id})
+    png = warp_board_png(found[1], found[0].quad)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
 
 
 # --- housekeeping ----------------------------------------------------------------------------
@@ -371,8 +401,7 @@ def rename(request: Request, game_id: str, name: str = Form("")) -> Response:
     if isinstance(game, HTMLResponse):
         return game
     game.name = name.strip()[:60] or game.name
-    _save(request, game)
-    return _redirect(f"/game/{game.id}")
+    return _finish(request, game)
 
 
 @router.post("/game/{game_id}/delete")

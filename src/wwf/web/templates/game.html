@@ -3,28 +3,6 @@
 {% block body_class %}page-game{% endblock %}
 {% block content %}
 <div class="game" data-game="{{ game.id }}">
-  {% if labelling %}
-  <section class="card labelling-card">
-    <h1>Label a test picture</h1>
-    <p>This edits the label of <code>{{ game.fixture_name }}</code>, which teaches the board reader
-      what that picture shows. It is <b>not</b> a game: type exactly what the picture shows,
-      nothing more.</p>
-    {% if problem_squares %}
-    <p class="notice error">{{ problem_squares | length }} square{{ "s" if problem_squares | length != 1 }}
-      outlined in red {{ "disagree" if problem_squares | length != 1 else "disagrees" }} with the
-      picture: {% for (r, c), says in problem_squares.items() %}row {{ r + 1 }}, column {{ c + 1 }}
-      (picture shows {{ says }}){% if not loop.last %}; {% endif %}{% endfor %}.
-      Often a tile typed here from a later turn.</p>
-    {% endif %}
-    <div class="actions">
-      <form action="/fixtures/{{ game.fixture_name }}/play" method="post">
-        <button type="submit" class="primary">Play this position as a game</button>
-      </form>
-      <a class="button" href="/fixtures">Back to the pictures</a>
-    </div>
-  </section>
-  {% include "_board_form.html" %}
-  {% else %}
   {% include "_game_header.html" %}
 
   {% if drew is not none %}
@@ -46,29 +24,30 @@
   </section>
   {% endif %}
 
-  {% if game.phase == "opponent_turn" %}
-    {% include "_opponent_panel.html" %}
+  {% if not game.started %}
+    {% include "_setup_card.html" %}
   {% elif pending %}
     {% include "_pending_card.html" %}
   {% endif %}
 
   {% include "_board_form.html" %}
 
-  {% if game.phase == "my_turn" %}
-    {% include "_moves.html" %}
-    <section class="card pictures-card">
-      {% include "_pictures.html" %}
-    </section>
+  {% if game.started and not open_tiles %}
+    {% if game.phase == "my_turn" %}{% include "_moves.html" %}{% endif %}
+    {% include "_enter_move.html" %}
   {% endif %}
+
+  <section class="card pictures-card">
+    {% include "_pictures.html" %}
+  </section>
 
   {% include "_history.html" %}
 
-  {% if game.phase == "my_turn" %}
+  {% if game.started and not open_tiles and game.phase == "my_turn" %}
   <div id="thumb-bar" class="thumb-bar">
     {% if result and result.moves %}{% include "_play_button.html" %}
     {% else %}<button type="submit" form="board-form" name="action" value="solve" class="primary big">Solve</button>{% endif %}
   </div>
-  {% endif %}
   {% endif %}
 </div>
 {% endblock %}

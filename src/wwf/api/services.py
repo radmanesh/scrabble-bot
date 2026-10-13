@@ -1,4 +1,4 @@
-"""Application services shared by the JSON API and the server-rendered pages.
+"""Application services behind the server-rendered pages.
 
 Everything here is synchronous; routes run the slow parts (recognition, solving) in a thread pool.
 """
@@ -17,42 +17,35 @@ from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
-from wwf.api.fixtures import FixtureStore
-from wwf.api.games import Game, GameStore
+from wwf.api.games import Game, GameStore, Picture, grid_to_rows
 from wwf.api.schemas import (
     BOARD_SIZE,
     BoardGrid,
     DictionariesResponse,
     DictionaryInfoOut,
-    MoveIn,
     MoveOut,
     PlacementOut,
     RecognitionResultOut,
     ScoreOut,
-    SessionState,
     SolveResponse,
     SolverInfoOut,
     SolverParamOut,
     SolversResponse,
-    ValidateResponse,
     WordOut,
 )
-from wwf.api.session import Session, SessionStore
-from wwf.core.board import Board, Tile
+from wwf.core.board import Board
 from wwf.core.config import BoardConfig
 from wwf.core.dictionary import DictionaryRegistry
-from wwf.core.move import Direction, Placement, build_move
 from wwf.core.rack import Rack
-from wwf.core.scoring import ScoreBreakdown, score_move, validate_move
+from wwf.core.scoring import ScoreBreakdown
 from wwf.solvers.base import ParamError, ScoredMove, resolve_params
 from wwf.solvers.registry import SolverRegistry
 
-# A recognizer turns image bytes into a recognition result. The vision package will provide one
-# (milestones 3-4); until then the app runs without and the user types the board in.
-Recognizer = Callable[[bytes], RecognitionResultOut]
+# A recognizer turns image bytes into a recognition result. Without one (no trained reader yet)
+# the app still works: the board is typed in.
+Recognizer = Callable[..., RecognitionResultOut]
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-DRAFT_NOTE = "Read automatically by the board reader."
 
 
 log = logging.getLogger("wwf.api")
@@ -70,13 +63,12 @@ class ApiError(Exception):
 
 @dataclass
 class Settings:
-    session_ttl_s: float = 30 * 60
     solve_timeout_s: float = 10.0
     max_upload_bytes: int = MAX_UPLOAD_BYTES
     worker_threads: int = 4
-    fixtures_dir: Path | None = None  # set: fixture collection mode (wwf-serve --collect-fixtures)
     model_path: Path | None = None  # board reader; None disables reading pictures and retraining
     games_dir: Path | None = None  # where saved games live; None keeps games in memory only
+    archive_dir: Path | None = None  # older labelled pictures, used for training only
 
 
 def unavailable_recognition(warning: str = "recognition_unavailable") -> RecognitionResultOut:
@@ -95,7 +87,6 @@ class Services:
         cfg: BoardConfig,
         solvers: SolverRegistry,
         dictionaries: DictionaryRegistry,
-        sessions: SessionStore,
         settings: Settings,
         recognizer: Recognizer | None = None,
         games: GameStore | None = None,
@@ -103,18 +94,13 @@ class Services:
         self.cfg = cfg
         self.solvers = solvers
         self.dictionaries = dictionaries
-        self.sessions = sessions
-        self.games = (
-            games if games is not None else GameStore(settings.games_dir, settings.session_ttl_s)
-        )
+        self.games = games if games is not None else GameStore(settings.games_dir)
         self.settings = settings
         self.recognizer = recognizer
-        self.fixtures = FixtureStore(settings.fixtures_dir) if settings.fixtures_dir else None
         self._retrain_lock = threading.Lock()
         self._retraining = False
         self._retrain_again = False
         self.reader_trained_at: float | None = None
-        self.label_problems: dict[str, int] = {}  # picture -> squares its picture contradicts
 
     # --- options ----------------------------------------------------------------------------
 
@@ -147,7 +133,7 @@ class Services:
             ) from None
         return solver_id, full, did
 
-    # --- sessions ---------------------------------------------------------------------------
+    # --- games ------------------------------------------------------------------------------
 
     def _resolve_options(
         self, options: tuple[str, dict[str, Any], str | None] | None
@@ -159,64 +145,20 @@ class Services:
                 pass  # a stale cookie must not break starting a game
         return self.default_options()
 
-    def new_session(self, options: tuple[str, dict[str, Any], str | None] | None = None) -> Session:
-        sid, params, did = self._resolve_options(options)
-        return self.sessions.create(sid, params, did)
-
     def new_game(
-        self,
-        options: tuple[str, dict[str, Any], str | None] | None = None,
-        *,
-        ephemeral: bool = False,
-        name: str = "",
+        self, options: tuple[str, dict[str, Any], str | None] | None = None, *, name: str = ""
     ) -> Game:
         sid, params, did = self._resolve_options(options)
-        return self.games.create(sid, params, did, name=name, ephemeral=ephemeral)
-
-    def session(self, session_id: str) -> Session:
-        """A saved game or a session: both carry a board, a rack and options."""
-        game = self.games.find(session_id)
-        if game is not None:
-            return game
-        try:
-            return self.sessions.get(session_id)
-        except KeyError:
-            raise ApiError(404, "session_not_found", {"session_id": session_id}) from None
+        return self.games.create(sid, params, did, name=name)
 
     def game(self, game_id: str) -> Game:
-        game = self.games.find(game_id)
+        game = self.games.get(game_id)
         if game is None:
             raise ApiError(404, "game_not_found", {"game_id": game_id})
         return game
 
-    def state(self, s: Session, request_id: str = "") -> SessionState:
-        return SessionState(
-            request_id=request_id,
-            session_id=s.id,
-            board=s.board,
-            rack=s.rack,
-            has_image=s.image is not None,
-            recognition=s.recognition,
-            corrected=s.corrected,
-            solver_id=s.solver_id,
-            params=s.params,
-            dictionary_id=s.dictionary_id,
-            has_result=s.last_result is not None,
-            expires_in_s=-1 if isinstance(s, Game) else self.sessions.expires_in(s),
-        )
-
-    def set_board(self, s: Session, board: BoardGrid, rack: str) -> None:
-        s.board = board
-        s.rack = rack
-        s.corrected = True
-        s.last_result = None
-        if isinstance(s, Game):
-            s.follow_board()
-
-    def set_options(
-        self, s: Session, solver_id: str, params: dict[str, Any], did: str | None
-    ) -> None:
-        s.solver_id, s.params, s.dictionary_id = self.check_options(solver_id, params, did)
+    def set_options(self, g: Game, solver_id: str, params: dict[str, Any], did: str | None) -> None:
+        g.solver_id, g.params, g.dictionary_id = self.check_options(solver_id, params, did)
 
     # --- recognition ------------------------------------------------------------------------
 
@@ -251,33 +193,48 @@ class Services:
             log.exception("reading a picture failed")
             return unavailable_recognition(f"recognition_failed:{type(e).__name__}")
 
-    def attach_image(
-        self, s: Session, data: bytes, content_type: str, previous: BoardGrid | None = None
+    def attach_picture(
+        self, g: Game, data: bytes, content_type: str, source: str
     ) -> RecognitionResultOut:
-        """Read a picture into the session: board, rack and the picture itself.
+        """Read a picture into the game's open turn and keep the picture with the game.
 
-        With `previous` (the board on file), tiles already on it are kept and only its empty
-        squares are read from the new picture: tiles never leave a WWF board. A picture that
-        does not belong to that board is refused and changes nothing."""
-        have_previous = previous is not None and any(any(row) for row in previous)
-        hint = s.recognition.geometry.quad if s.recognition and s.recognition.geometry else None
-        result = self.recognize(data, previous if have_previous else None, hint)
-        if have_previous and not result.merged and previous is not None:
+        Once the game has started, tiles already confirmed are kept and only the other squares
+        are read from the picture: tiles never leave a WWF board. A picture that does not
+        belong to the game is refused and changes nothing (and is not kept)."""
+        previous = g.base_board if g.started and any(any(r) for r in g.base_board) else None
+        hint = g.recognition.geometry.quad if g.recognition and g.recognition.geometry else None
+        result = self.recognize(data, previous, hint)
+        if previous is not None and not result.merged:
             result = merge_with_previous(result, previous)  # a reader that does not merge itself
         if result.rejected:
-            s.notice = {"kind": "refused", "warnings": result.warnings, "match": result.match}
+            g.notice = {"kind": "refused", "warnings": result.warnings, "match": result.match}
             return result
-        s.image = data
-        s.image_type = content_type
-        s.recognition = result
-        s.board = [row[:] for row in result.board]
+        pic = self.games.add_picture(g, data, content_type, source)
+        pic.read_board = grid_to_rows(result.board)
+        pic.read_rack = "".join(result.rack)
+        if result.geometry is not None:
+            pic.quad = [list(p) for p in result.geometry.quad]
+        g.recognition = result
+        g.board = [row[:] for row in result.board]
         if "rack_cut_off" not in result.warnings:
-            s.rack = "".join(result.rack)  # an unreadable rack leaves yours alone
-        s.corrected = False
-        s.last_result = None
-        if isinstance(s, Game):
-            s.follow_board()
+            g.rack = "".join(result.rack)  # an unreadable rack leaves yours alone
+        g.last_result = None
+        # whatever is new on the board now is the open turn, read from this picture
+        if any(
+            ch and not g.base_board[r][c]
+            for r, row in enumerate(g.board)
+            for c, ch in enumerate(row)
+        ):
+            g.open_source = "picture"
+            g.open_player = None
+        else:
+            g.open_source = ""
         return result
+
+    def picture(self, g: Game, picture_id: str) -> tuple[Picture, bytes] | None:
+        pic = g.picture(picture_id)
+        data = self.games.picture_bytes(g, pic) if pic else None
+        return (pic, data) if pic is not None and data is not None else None
 
     # --- solving ----------------------------------------------------------------------------
 
@@ -286,7 +243,7 @@ class Services:
 
     def solve(
         self,
-        s: Session,
+        s: Game,
         solver_id: str | None = None,
         params: dict[str, Any] | None = None,
         dictionary_id: str | None = None,
@@ -328,38 +285,14 @@ class Services:
             board_after=board.with_move(m).to_grid(),
         )
 
-    def validate(
-        self, grid: BoardGrid, rack: str, move_in: MoveIn, dictionary_id: str | None
-    ) -> ValidateResponse:
-        did = dictionary_id or self.dictionaries.default_id
-        try:
-            dictionary = self.dictionaries.get(did)
-        except KeyError:
-            raise ApiError(422, "unknown_dictionary", {"dictionary_id": did}) from None
-        board = self.board(grid)
-        placements = [
-            Placement(
-                p.row,
-                p.col,
-                Tile(p.letter.upper(), p.letter.islower() if p.is_blank is None else p.is_blank),
-            )
-            for p in move_in.placements
-        ]
-        direction = Direction(move_in.direction) if move_in.direction else None
-        move = build_move(board, placements, direction)
-        violations = validate_move(board, move, dictionary, self.cfg, Rack.from_string(rack))
-        score = None if violations else score_out(score_move(board, move, self.cfg))
-        return ValidateResponse(violations=violations, score=score)
-
-    # --- learning from labels (fixture collection mode) ------------------------------------
+    # --- learning from confirmed pictures --------------------------------------------------
 
     def schedule_retrain(self) -> bool:
-        """Rebuild the board reader from the labelled fixtures in the background.
+        """Rebuild the board reader from the labelled pictures in the background.
 
-        Runs at most one retrain at a time; labels saved meanwhile trigger one more pass after
-        it. Returns False when retraining is off (no fixtures folder or no model path).
-        """
-        if self.fixtures is None or self.settings.model_path is None:
+        Runs at most one retrain at a time; turns confirmed meanwhile trigger one more pass
+        after it. Returns False when retraining is off (no model path)."""
+        if self.settings.model_path is None:
             return False
         with self._retrain_lock:
             if self._retraining:
@@ -376,13 +309,17 @@ class Services:
     def _retrain_loop(self) -> None:
         from wwf.api.vision_adapter import load_recognizer, retrain
 
-        assert self.fixtures is not None and self.settings.model_path is not None
+        assert self.settings.model_path is not None
         while True:
             start = time.perf_counter()
             try:
-                issues = retrain(self.fixtures.directory, self.cfg, self.settings.model_path)
-                if issues is not None:
-                    self._note_label_problems(issues)
+                done = retrain(
+                    self.settings.archive_dir,
+                    self.settings.games_dir,
+                    self.cfg,
+                    self.settings.model_path,
+                )
+                if done:
                     recognizer = load_recognizer(self.cfg, self.settings.model_path)
                     if recognizer is not None:
                         self.recognizer = recognizer
@@ -396,58 +333,6 @@ class Services:
                     continue
                 self._retraining = False
                 return
-
-    def _note_label_problems(self, issues: list[tuple[str, int, int]]) -> None:
-        counts: dict[str, int] = {}
-        for name, _, _ in issues:
-            counts[name] = counts.get(name, 0) + 1
-        self.label_problems = counts
-
-    def refresh_label_problems(self) -> None:
-        """Find labels that contradict their pictures (run in the background at startup)."""
-        if self.fixtures is None or self.recognizer is None:
-            return
-        try:
-            from wwf.vision.train import label_issues
-
-            found = label_issues(self.fixtures.directory, self.cfg)
-            self._note_label_problems([(i.name, i.row, i.col) for i in found])
-        except Exception:
-            log.exception("checking labels against their pictures failed")
-
-    def picture_problems(self, image: bytes, board: BoardGrid) -> list[tuple[int, int, str]]:
-        """Squares of `board` that `image` contradicts, using the loaded reader."""
-        if self.recognizer is None:
-            return []
-        from wwf.api.vision_adapter import check_picture
-
-        try:
-            return check_picture(self.recognizer, image, board, self.cfg)
-        except Exception:
-            log.exception("checking a label against its picture failed")
-            return []
-
-    def draft_unlabelled_fixtures(self) -> int:
-        """Read every fixture picture that has no label yet into a draft. Returns how many."""
-        if self.fixtures is None or self.recognizer is None:
-            return 0
-        drafted = 0
-        for fixture in self.fixtures.list():
-            if fixture.status != "none":
-                continue
-            try:
-                result = self.recognizer(fixture.image.read_bytes())
-            except Exception:
-                log.exception("could not read fixture %s", fixture.name)
-                continue
-            if result.geometry is None:
-                continue
-            self.fixtures.write_draft(fixture.name, result.board, "".join(result.rack),
-                                      result.geometry.quad, DRAFT_NOTE)  # fmt: skip
-            drafted += 1
-        if drafted:
-            log.info("drafted labels for %d unlabelled fixtures", drafted)
-        return drafted
 
     # --- catalogues -------------------------------------------------------------------------
 

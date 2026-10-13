@@ -4,9 +4,11 @@
   <ol class="turn-log">
     {% for t in turns %}
     <li class="{{ t.player }}">
-      <span class="who">{{ "You" if t.player == "me" else "Opponent" }}</span>
+      <span class="who">{{ "—" if t.kind == "start" else "You" if t.player == "me" else "Opponent" }}</span>
       {% if t.kind == "pass" %}
       <span>passed</span>
+      {% elif t.kind == "start" %}
+      <span>{{ "Starting position" if t.n == 1 else "Board updated" }} · {{ t.tiles }} tile{{ "s" if t.tiles != 1 }}</span>
       {% else %}
       <b>{{ t.word }}</b> {{ "→" if t.direction == "across" else "↓" }}
       <span class="pts">{{ t.points }}</span>
@@ -15,14 +17,16 @@
       </span>
       {% if t.forced %}<span class="badge" title="Not in the word list, but the game accepted it">not in list</span>{% endif %}
       {% endif %}
+      {% if t.picture %}<a class="turn-thumb" href="/game/{{ game.id }}/picture/{{ t.picture }}" target="_blank" rel="noopener" title="The picture this turn came from"><img src="/game/{{ game.id }}/picture/{{ t.picture }}" alt="Picture for turn {{ t.n }}" loading="lazy"></a>{% endif %}
     </li>
     {% endfor %}
   </ol>
   <form action="/game/{{ game.id }}/undo" method="post" class="actions">
     <button type="submit">Undo last turn</button>
+    <span class="hint small">Reopens it so you can fix it.</span>
   </form>
   {% else %}
-  <p class="hint">Moves you play and the opponent's moves are listed here with their scores.</p>
+  <p class="hint">Confirmed turns are listed here, locked, with their scores and the picture each came from.</p>
   {% endif %}
 
   {% if bag %}

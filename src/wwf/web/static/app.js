@@ -213,6 +213,9 @@
         if (arrows[e.key]) {
           e.preventDefault();
           move(input, ...arrows[e.key]);
+        } else if (input.readOnly) {
+          // a square from a confirmed turn: read-only, only navigation works
+          if (!e.metaKey && !e.ctrlKey && e.key.length === 1) e.preventDefault();
         } else if (e.key === "Backspace") {
           // Clear this cell and step left; on an empty cell, step left and clear that one.
           e.preventDefault();
@@ -220,7 +223,7 @@
           input.value = ""; markBlank(input);
           move(input, 0, -1);
           const prev = document.activeElement;
-          if (!hadValue && prev !== input && prev.classList.contains("cell")) {
+          if (!hadValue && prev !== input && prev.classList.contains("cell") && !prev.readOnly) {
             prev.value = ""; markBlank(prev);
           }
         } else if (e.key === "Delete") {
@@ -235,6 +238,7 @@
       });
       // Mobile keyboards often skip keydown; fall back to the input event.
       input.addEventListener("input", () => {
+        if (input.readOnly) return;
         input.value = input.value.replace(/[^a-zA-Z]/g, "").slice(-1);
         markBlank(input);
         if (input.value) move(input, 0, 1);
@@ -267,7 +271,7 @@
       toggle.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cell focused
       toggle.addEventListener("click", () => {
         const input = lastFocused;
-        if (!input || !input.value || input.classList.contains("rack-cell")) return;
+        if (!input || !input.value || input.readOnly || input.classList.contains("rack-cell")) return;
         input.value = input.value === input.value.toUpperCase()
           ? input.value.toLowerCase() : input.value.toUpperCase();
         markBlank(input);

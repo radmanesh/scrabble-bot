@@ -6,55 +6,45 @@ import re
 
 from fastapi.testclient import TestClient
 
-
-def _new_review(client: TestClient) -> str:
-    r = client.post("/new", follow_redirects=False)
-    assert r.status_code == 303
-    location: str = r.headers["location"]
-    assert location.startswith("/game/")
-    return location.rsplit("/", 1)[1]
+from tests.api.helpers import FakeReader, form, new_game, reading
+from wwf.api.services import Services
 
 
-def _board_form(rows: dict[int, tuple[int, str]], rack: str) -> dict[str, str]:
-    form = {f"c-{r}-{c}": "" for r in range(15) for c in range(15)}
-    for r, (c0, word) in rows.items():
-        for i, ch in enumerate(word):
-            form[f"c-{r}-{c0 + i}"] = ch
-    for i in range(7):
-        form[f"r-{i}"] = rack[i] if i < len(rack) else ""
-    return form
-
-
-def test_upload_page_puts_the_camera_first(client: TestClient) -> None:
+def test_home_puts_the_camera_first(client: TestClient) -> None:
     html = client.get("/").text
     camera = html.index('capture="environment"')
     upload = html.index('id="file-form"')
     assert camera < upload, "the camera must come before the file upload"
     assert html.count('name="image"') == 2
-    # the upload input must not force the camera
     file_form = html[upload : html.index("</form>", upload)]
     assert 'accept="image/*"' in file_form and "capture" not in file_form
     assert 'id="viewfinder"' in html and 'action="/new"' in html
-    assert "/static/htmx.min.js" in html
+    assert "Fixtures" not in html and "collect" not in html.lower()
 
 
 def test_game_page_offers_camera_then_upload(client: TestClient) -> None:
-    sid = _new_review(client)
-    html = client.get(f"/game/{sid}").text
-    retake = html.index("Take a picture")
+    gid = new_game(client)
+    html = client.get(f"/game/{gid}").text
     assert html.index('capture="environment"') < html.index("Upload instead")
-    assert retake < html.index("Upload instead")
-    # on a computer, Retake opens the same webcam viewfinder as the upload page
     assert 'id="camera-button"' in html and 'id="viewfinder"' in html
+    assert "Starting position" in html  # nothing is locked until it is confirmed
 
 
-def test_upload_starts_a_game(client: TestClient, png_bytes: bytes) -> None:
+def test_upload_starts_a_game_and_keeps_the_picture(
+    client: TestClient, services: Services, reader: FakeReader, png_bytes: bytes
+) -> None:
+    reader.next = reading({7: (5, "HELLO")}, "ABCDEFG")
     r = client.post("/upload", files={"image": ("s.png", png_bytes, "image/png")},
                     follow_redirects=False)  # fmt: skip
     assert r.status_code == 303
+    gid = r.headers["location"].rsplit("/", 1)[1]
+    game = services.game(gid)
+    assert len(game.pictures) == 1 and game.pictures[0].source == "photo"
+    assert game.board[7][5:10] == list("HELLO") and game.rack == "ABCDEFG"
+    assert game.started is False and game.open_source == "picture"
     html = client.get(r.headers["location"]).text
-    assert "/api/v1/session/" in html and "/image" in html
-    assert "type the board in" in html
+    assert f"/game/{gid}/picture/p1" in html
+    assert client.get(f"/game/{gid}/picture/p1").content == png_bytes
 
 
 def test_upload_rejects_non_image(client: TestClient) -> None:
@@ -63,47 +53,47 @@ def test_upload_rejects_non_image(client: TestClient) -> None:
     assert "an image we can read" in r.text
 
 
-def test_three_steps_to_moves(client: TestClient) -> None:
-    sid = _new_review(client)
-    html = client.get(f"/game/{sid}").text
+def test_board_form_renders_every_square(client: TestClient) -> None:
+    gid = new_game(client)
+    html = client.get(f"/game/{gid}").text
     assert html.count('class="cell ') == 225 + 7
     assert 'placeholder="TW"' in html
 
-    form = _board_form({7: (5, "HELLO")}, "SATIRE?") | {"action": "solve"}
-    r = client.post(f"/game/{sid}/board", data=form, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == f"/game/{sid}"
 
-    html = client.get(f"/game/{sid}").text
+def test_solve_shows_ranked_moves(client: TestClient) -> None:
+    gid = new_game(client)
+    r = client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "start_me"),
+                    follow_redirects=False)  # fmt: skip
+    assert r.status_code == 303
+    r = client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "solve"),
+                    follow_redirects=False)  # fmt: skip
+    assert r.status_code == 303 and r.headers["location"] == f"/game/{gid}"
+    html = client.get(f"/game/{gid}").text
     assert "Smart brute force" in html
     assert html.count("<tr") == 26  # header + 25 moves
-    assert "AERIEST" in html
-    assert re.search(r'class="cell[^"]* new', html)  # preview highlights the new tiles
-
-    preview = client.get(f"/game/{sid}/preview/3").text
+    assert re.search(r'class="cell[^"]* new', html)
+    preview = client.get(f"/game/{gid}/preview/3").text
     assert "<h2>" in preview and "board preview" in preview
 
 
-def test_review_rejects_bad_cells(client: TestClient) -> None:
-    sid = _new_review(client)
-    form = _board_form({7: (5, "HELLO")}, "AB") | {"c-0-0": "1", "action": "save"}
-    r = client.post(f"/game/{sid}/board", data=form)
-    assert r.status_code == 422
-    assert "Row 1, column 1" in r.text
+def test_board_form_rejects_bad_cells(client: TestClient) -> None:
+    gid = new_game(client)
+    data = form({7: (5, "HELLO")}, "AB") | {"c-0-0": "1"}
+    r = client.post(f"/game/{gid}/board", data=data)
+    assert r.status_code == 422 and "Row 1, column 1" in r.text
 
 
 def test_solve_needs_a_rack(client: TestClient) -> None:
-    sid = _new_review(client)
-    r = client.post(f"/game/{sid}/board", data=_board_form({}, "") | {"action": "solve"})
-    assert r.status_code == 422
-    assert "rack" in r.text
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({}, "", "start_me"))
+    r = client.post(f"/game/{gid}/board", data=form({}, "", "solve"))
+    assert r.status_code == 422 and "rack" in r.text
 
 
-def test_lowercase_cell_is_a_blank(client: TestClient) -> None:
-    sid = _new_review(client)
-    form = _board_form({7: (5, "HELlO")}, "S") | {"action": "save"}
-    client.post(f"/game/{sid}/board", data=form)
-    state = client.get(f"/api/v1/session/{sid}").json()
-    assert state["board"][7][5:10] == ["H", "E", "L", "l", "O"]
+def test_lowercase_cell_is_a_blank(client: TestClient, services: Services) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELlO")}, "S"))
+    assert services.game(gid).board[7][5:10] == ["H", "E", "L", "l", "O"]
 
 
 def test_options_page_is_generated_from_schema(client: TestClient) -> None:
@@ -114,13 +104,13 @@ def test_options_page_is_generated_from_schema(client: TestClient) -> None:
     assert 'name="dictionary_id"' in html
 
 
-def test_options_save_applies_to_session_and_new_sessions(client: TestClient) -> None:
-    sid = _new_review(client)
+def test_options_apply_to_the_game_and_new_games(client: TestClient, services: Services) -> None:
+    gid = new_game(client)
     r = client.post(
         "/options",
         data={
             "solver_id": "anchor_trie",
-            "session_id": sid,
+            "game_id": gid,
             "dictionary_id": "words",
             "p.anchor_trie.max_results": "4",
             "p.anchor_trie.min_score": "0",
@@ -130,31 +120,26 @@ def test_options_save_applies_to_session_and_new_sessions(client: TestClient) ->
         follow_redirects=False,
     )
     assert r.status_code == 303
-    state = client.get(f"/api/v1/session/{sid}").json()
-    assert state["params"] == {"max_results": 4, "min_score": 0, "allow_blank_branching": True,
-                               "tie_break": "score_only"}  # fmt: skip
-    assert state["dictionary_id"] == "words"
-
-    # the cookie carries the choice into sessions started later
-    later = _new_review(client)
-    assert client.get(f"/api/v1/session/{later}").json()["params"]["max_results"] == 4
+    game = services.game(gid)
+    assert game.params == {"max_results": 4, "min_score": 0, "allow_blank_branching": True,
+                           "tie_break": "score_only"}  # fmt: skip
+    assert game.dictionary_id == "words"
+    later = new_game(client)  # the cookie carries the choice into games started later
+    assert services.game(later).params["max_results"] == 4
     assert 'value="4"' in client.get("/options").text
 
 
-def test_options_save_rejects_out_of_range(client: TestClient) -> None:
+def test_options_reject_out_of_range(client: TestClient) -> None:
     r = client.post("/options", data={"solver_id": "anchor_trie", "p.anchor_trie.max_results": "0"})
-    assert r.status_code == 422
-    assert "max_results" in r.text
+    assert r.status_code == 422 and "max_results" in r.text
 
 
-def test_expired_session_page(client: TestClient) -> None:
+def test_missing_game_page(client: TestClient) -> None:
     r = client.get("/game/doesnotexist")
-    assert r.status_code == 404
-    assert "Game not found" in r.text
+    assert r.status_code == 404 and "Game not found" in r.text
 
 
-def test_old_review_and_results_links_redirect(client: TestClient) -> None:
-    sid = _new_review(client)
-    for old in (f"/review/{sid}", f"/results/{sid}"):
-        r = client.get(old, follow_redirects=False)
-        assert r.status_code == 303 and r.headers["location"] == f"/game/{sid}"
+def test_removed_pages_are_gone(client: TestClient) -> None:
+    assert client.get("/fixtures").status_code == 404
+    assert client.post("/api/v1/session").status_code in (404, 405)
+    assert client.get("/api/v1/health").json()["status"] == "ok"

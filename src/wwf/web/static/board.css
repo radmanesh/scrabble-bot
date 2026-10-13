@@ -222,3 +222,15 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .labelling-card { border-color: var(--review); }
 .problem { color: var(--err); margin: 4px 0; }
 .fixture .actions { margin-top: 6px; }
+
+/* confirmed squares are read-only; the open turn is editable */
+.cell.locked { background-image: linear-gradient(rgba(0,0,0,.06), rgba(0,0,0,.06)); cursor: default; }
+.cell.locked:focus { outline: 2px solid var(--line); }
+.turn-line { margin: 8px 0 0; }
+.who-pick { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.pic-strip { display: flex; gap: 10px; overflow-x: auto; margin-top: 12px; padding-bottom: 4px; }
+.pic-strip .pic { flex: 0 0 auto; width: 96px; display: grid; gap: 2px; text-decoration: none; color: inherit; }
+.pic-strip img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.turn-thumb { margin-left: auto; }
+.turn-thumb img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); vertical-align: middle; }
+.turn-log li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

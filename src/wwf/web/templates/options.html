@@ -3,11 +3,11 @@
 {% block body_class %}page-options{% endblock %}
 {% block content %}
 <h1>Options</h1>
-{% if saved %}<p class="notice ok">Saved{% if session %} for this board{% endif %}.
-  {% if session %}<a href="/game/{{ session.id }}">Back to the game</a>{% endif %}</p>{% endif %}
+{% if saved %}<p class="notice ok">Saved{% if game %} for this game{% endif %}.
+  {% if game %}<a href="/game/{{ game.id }}">Back to the game</a>{% endif %}</p>{% endif %}
 
 <form id="options-form" action="/options" method="post">
-  <input type="hidden" name="session_id" value="{{ session.id if session else '' }}">
+  <input type="hidden" name="game_id" value="{{ game.id if game else '' }}">
 
   <fieldset class="card">
     <legend>Solver</legend>

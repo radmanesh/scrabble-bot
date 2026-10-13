@@ -68,25 +68,9 @@ def load_recognizer(cfg: BoardConfig, path: Path) -> Callable[..., RecognitionRe
     return read
 
 
-def retrain(fixtures_dir: Path, cfg: BoardConfig, path: Path) -> list[tuple[str, int, int]] | None:
-    """Rebuild the reader from the labelled fixtures. The label problems found, as
-    (picture, row, column), or None when nothing could be trained."""
-    from wwf.vision.train import train_from_fixtures
+def retrain(archive: Path | None, games_dir: Path | None, cfg: BoardConfig, path: Path) -> bool:
+    """Rebuild the reader from the archive and the games' labelled pictures. False when there
+    was nothing to learn from."""
+    from wwf.vision.train import train_from_sources
 
-    result = train_from_fixtures(fixtures_dir, cfg, path)
-    if result is None:
-        return None
-    return [(i.name, i.row, i.col) for i in result[1]]
-
-
-def check_picture(
-    recognizer: object, image: bytes, board: list[list[str | None]], cfg: BoardConfig
-) -> list[tuple[int, int, str]]:
-    """Squares of a label that its picture contradicts, using the loaded reader."""
-    from wwf.vision.pipeline import decode
-    from wwf.vision.train import picture_issues
-
-    model = getattr(recognizer, "model", None)
-    if model is None:
-        return []
-    return picture_issues(model, decode(image), board, cfg)
+    return train_from_sources(archive, games_dir, cfg, path) is not None
