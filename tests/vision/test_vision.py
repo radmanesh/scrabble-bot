@@ -11,7 +11,15 @@ from wwf.core.config import BoardConfig, assets_dir, load_board_config
 from wwf.vision.board import find_board, visible_mask
 from wwf.vision.occupancy import OccupancyModel, measure
 from wwf.vision.pipeline import Recognizer, decode, read_image
-from wwf.vision.reader import ReaderModel, board_image, glyph_features, glyph_mask
+from wwf.vision.reader import (
+    CELL,
+    ReaderModel,
+    board_image,
+    centred_crop,
+    glyph_features,
+    glyph_mask,
+    pad_board,
+)
 from wwf.vision.synth import available_fonts, render_tile
 from wwf.vision.train import build_model, evaluate, load_examples
 
@@ -62,6 +70,39 @@ def test_glyphs_dark_or_white_and_blanks() -> None:
     assert np.abs(glyph_features(dark) - glyph_features(white)).mean() < 0.05
     blank = np.full((48, 48, 3), (190, 200, 120), np.uint8)
     assert glyph_mask(blank) is None
+
+
+def test_a_crop_is_moved_onto_a_letter_the_grid_cut_off() -> None:
+    """A grid a quarter of a square too high cuts an L's foot off; re-centring brings it back."""
+    font, index = available_fonts()[0]
+    tile = render_tile("L", font, index, (190, 200, 120), 70)
+    board = np.full((3 * CELL, 3 * CELL, 3), (190, 200, 120), np.uint8)
+    board[CELL : 2 * CELL, CELL : 2 * CELL] = tile
+    padded = pad_board(board)
+    off = int(0.25 * CELL)  # the square the grid thinks is (1, 1) sits this far above the tile
+    shifted = np.roll(padded, -off, axis=0)
+    lo, hi = CELL // 2 + CELL, CELL // 2 + 2 * CELL  # square (1, 1) in the padded board
+    plain = shifted[lo:hi, lo:hi]
+    fixed = centred_crop(shifted, 1, 1)
+    whole = glyph_mask(tile)
+    assert whole is not None and glyph_mask(fixed) is not None and glyph_mask(plain) is not None
+    d_fixed = np.abs(glyph_features(glyph_mask(fixed)) - glyph_features(whole)).mean()
+    d_plain = np.abs(glyph_features(glyph_mask(plain)) - glyph_features(whole)).mean()
+    assert d_fixed < d_plain
+
+
+def test_a_model_file_with_other_occupancy_features_falls_back(tmp_path: Path) -> None:
+    """Weights saved when the occupancy model had fewer features can't be used: use the default."""
+    path = tmp_path / "old.npz"
+    np.savez_compressed(
+        path,
+        glyph_x=np.zeros((1, 4), np.float32),
+        glyph_y=np.zeros(1, np.int64),
+        occ_plain=np.zeros(7, np.float32),
+        occ_bonus=np.zeros(7, np.float32),
+    )
+    model = ReaderModel.load(path)
+    assert model.occupancy.w_plain.shape == OccupancyModel.default().w_plain.shape
 
 
 def test_reads_the_synthetic_board(current: BoardConfig, synthetic_model: ReaderModel) -> None:

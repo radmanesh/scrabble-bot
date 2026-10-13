@@ -24,7 +24,7 @@ import numpy as np
 from wwf.core.config import BoardConfig
 from wwf.vision.board import cream_colour
 
-N_FEATURES = 7
+N_FEATURES = 8
 
 # How an empty bonus square differs from an empty cream square in Lab, measured over the labelled
 # pictures (median; the a and b channels vary by only 1-4 between pictures). A reference built
@@ -48,6 +48,7 @@ class Measures:
     strokes: np.ndarray  # (15, 15) fraction of pixels that stand out from the square's background
     glyph_h: np.ndarray  # (15, 15) height of the biggest letter-like stroke group, 0 if none
     peak: np.ndarray  # (15, 15) strongest stroke contrast
+    ink: np.ndarray  # (15, 15) how far the darkest pixels sit below the square's own median
     bonus: np.ndarray  # (15, 15) bool: a bonus square in the layout
     inside: np.ndarray  # (15, 15) bool: the square is inside the picture
 
@@ -60,6 +61,7 @@ class Measures:
                 self.strokes / 0.15,
                 self.glyph_h,
                 self.peak / 60.0,
+                self.ink / 60.0,
                 self.de_cream / 30.0 * b,
                 b,
                 np.ones_like(b),
@@ -132,12 +134,16 @@ def measure(board_bgr: np.ndarray, cfg: BoardConfig, inside: np.ndarray) -> Meas
     strokes = np.zeros((15, 15), np.float32)
     glyph_h = np.zeros((15, 15), np.float32)
     peak = np.zeros((15, 15), np.float32)
+    ink = np.zeros((15, 15), np.float32)
     for r in range(15):
         for c in range(15):
             ys, xs = slice(r * px + m, (r + 1) * px - m), slice(c * px + m, (c + 1) * px - m)
             colour[r, c] = np.median(lab[ys, xs].reshape(-1, 3), axis=0)
             g = gray[ys, xs]
             strokes[r, c] = float((np.abs(g.astype(np.float32) - np.median(g)) > 28).mean())
+            # Dark ink: a tile's letter is dark, while an empty bonus square's "DL" / "TW" label is
+            # white, so this tells a tile on a bonus square from an empty one when colour cannot.
+            ink[r, c] = float(np.median(g) - np.percentile(g, 2))
             gm = int(0.08 * px)
             inner = gray[r * px + gm : (r + 1) * px - gm, c * px + gm : (c + 1) * px - gm]
             glyph_h[r, c], peak[r, c] = _glyph_stats(inner)
@@ -162,7 +168,7 @@ def measure(board_bgr: np.ndarray, cfg: BoardConfig, inside: np.ndarray) -> Meas
         ref = _nearest_cluster(colour[kmask & inside], expected, weights) if kind != "*" else None
         ref = expected if ref is None else ref
         de_ref[kmask] = np.linalg.norm((colour[kmask] - ref) * weights, axis=1)
-    return Measures(de_ref, de_cream, strokes, glyph_h, peak, bonus, inside)
+    return Measures(de_ref, de_cream, strokes, glyph_h, peak, ink, bonus, inside)
 
 
 # --- the model ---------------------------------------------------------------------------------
@@ -195,11 +201,12 @@ def fit_logistic(
     return w.astype(np.float32)
 
 
-# Weights learned from the labelled pictures (see wwf.vision.train); used when a model file
-# has none. Features: distance from the reference colour, strokes, glyph height, peak contrast,
-# distance from cream (bonus squares), is-bonus, bias.
-DEFAULT_PLAIN = (3.44, 0.18, 3.47, 5.3, 0.0, 0.0, -9.17)
-DEFAULT_BONUS = (9.22, 1.39, 0.66, 2.13, -0.33, -3.56, -3.56)
+# Weights from the first labelled pictures (see wwf.vision.train); used when a model file has
+# none, and without the dark-ink feature, which a trained model uses. Features: distance from
+# the reference colour, strokes, glyph height, peak contrast, dark ink, distance from cream
+# (bonus squares), is-bonus, bias.
+DEFAULT_PLAIN = (3.44, 0.18, 3.47, 5.3, 0.0, 0.0, 0.0, -9.17)
+DEFAULT_BONUS = (9.22, 1.39, 0.66, 2.13, 0.0, -0.33, -3.56, -3.56)
 
 
 @dataclass

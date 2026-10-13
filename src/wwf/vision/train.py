@@ -35,9 +35,10 @@ from wwf.vision.reader import (
     LETTERS,
     ReaderModel,
     board_image,
-    cell_crops,
+    centred_crop,
     glyph_features,
     glyph_mask,
+    pad_board,
     rack_crops,
     rack_letter_area,
 )
@@ -45,9 +46,10 @@ from wwf.vision.synth import synthetic_tiles
 
 DEFAULT_FIXTURES = assets_dir() / "archive"
 ALIASES_FILE = "same_position.json"
-# A square whose label the picture contradicts this strongly is reported as a label problem and
-# left out of training and scoring.
-CONTRADICTION = 0.03
+# A square whose label the picture contradicts this strongly (the model gives the labelled state
+# under this probability) is reported as a label problem and left out of training and scoring.
+CONTRADICTION = 0.1
+CLEANING_ROUNDS = 3
 
 
 @dataclass
@@ -215,33 +217,40 @@ def build_model_and_issues(
     measured = [(ex, _measured(ex, cfg)) for ex in examples]
     rows = [(ex, mm) for ex, mm in measured if mm is not None]
 
-    # squares: fit once, drop the labels the pictures contradict, fit again
+    # squares: fit, drop the labels the pictures contradict, fit again. A label with tiles the
+    # picture doesn't show pulls the first fit towards calling them empty, so the dropping is
+    # repeated until it settles (a single round left about half of them in).
     occupancy = OccupancyModel.default()
     issues: list[LabelIssue] = []
     if rows:
         pairs = [(m, _truth(ex)) for ex, (_, _, m) in rows]
         occupancy = OccupancyModel.train(pairs)
-        cleaned = []
-        for (ex, (_, _, m)), (_, truth) in zip(rows, pairs, strict=True):
-            p = occupancy.probability(m)
-            bad = m.inside & ((truth & (p < CONTRADICTION)) | (~truth & (p > 1 - CONTRADICTION)))
-            for r, c in zip(*np.nonzero(bad), strict=True):
-                says = "empty" if truth[r, c] else "a tile"
-                issues.append(LabelIssue(ex.name, int(r), int(c), ex.board[r][c], says))
-            cleaned.append((dataclasses.replace(m, inside=m.inside & ~bad), truth))
-        occupancy = OccupancyModel.train(cleaned)
+        for _ in range(CLEANING_ROUNDS):
+            issues = []
+            cleaned = []
+            for (ex, (_, _, m)), (_, truth) in zip(rows, pairs, strict=True):
+                p = occupancy.probability(m)
+                bad = m.inside & (
+                    (truth & (p < CONTRADICTION)) | (~truth & (p > 1 - CONTRADICTION))
+                )
+                for r, c in zip(*np.nonzero(bad), strict=True):
+                    says = "empty" if truth[r, c] else "a tile"
+                    issues.append(LabelIssue(ex.name, int(r), int(c), ex.board[r][c], says))
+                cleaned.append((dataclasses.replace(m, inside=m.inside & ~bad), truth))
+            occupancy = OccupancyModel.train(cleaned)
 
     bad_squares = {(i.name, i.row, i.col) for i in issues}
     for ex, (fit, board, m) in rows:
-        crops = cell_crops(board)
+        padded = pad_board(board)
         likely = occupancy.probability(m) >= 0.5
         for r in range(15):
             for c in range(15):
                 ch = ex.board[r][c]
                 if ch == "." or not likely[r, c] or (ex.name, r, c) in bad_squares:
                     continue  # only squares that are labelled a tile AND look like one
+                base = centred_crop(padded, r, c)
                 for i in range(augment + 1):
-                    crop = crops[r, c] if i == 0 else _jitter(crops[r, c], rng)
+                    crop = base if i == 0 else _jitter(base, rng)
                     g = glyph_mask(crop)
                     if g is not None:
                         gx.append(glyph_features(g))

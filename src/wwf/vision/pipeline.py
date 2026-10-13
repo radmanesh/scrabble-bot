@@ -20,9 +20,10 @@ from wwf.vision.reader import (
     ReaderModel,
     board_image,
     cell_boxes,
-    cell_crops,
+    centred_crop,
     glyph_features,
     glyph_mask,
+    pad_board,
     rack_crops,
     rack_letter_area,
     rack_visible,
@@ -226,7 +227,7 @@ def read_image(
     if fit.confidence <= 0.6:
         warnings.append("low_board_confidence")
 
-    crops = cell_crops(crop_board)
+    padded = pad_board(crop_board)
     board: list[list[str | None]] = [[None] * 15 for _ in range(15)]
     conf = np.ones((15, 15), dtype=np.float32)
     glyph_cells, glyph_feats = [], []
@@ -243,7 +244,7 @@ def read_image(
             if not candidates[r, c]:
                 conf[r, c] = max(1.0 - float(p[r, c]), 0.0) if p[r, c] > 0.15 else 1.0
                 continue
-            g = glyph_mask(crops[r, c])
+            g = glyph_mask(centred_crop(padded, r, c))
             if g is None:
                 board[r][c] = "?"  # looks like a tile but no letter could be found
                 conf[r, c] = 0.0

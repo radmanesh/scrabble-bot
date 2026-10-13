@@ -6,7 +6,10 @@ Two small nearest-neighbour models, both built from labelled fixtures (see train
   relative to each picture's own colours.
 * letters: the glyph is cut out by taking pixels much darker or much lighter than the tile colour
   (last-played tiles have white letters), centred and scaled with its aspect ratio kept, then
-  described with HOG features and matched against labelled glyphs.
+  described with HOG features and matched against labelled glyphs. A square's crop is first
+  shifted so the letter sits in its middle (`centred_crop`): the fitted grid is rarely exact to
+  better than a fraction of a square, and a letter cut off at the edge looks like a different one
+  (an L without its foot is an I).
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import cv2
 import numpy as np
 
 from wwf.vision.board import BoardFit
-from wwf.vision.occupancy import OccupancyModel
+from wwf.vision.occupancy import N_FEATURES, OccupancyModel
 
 CELL = 48  # canonical pixels per board square
 GLYPH = 24  # glyph image side
@@ -52,6 +55,44 @@ def board_image(bgr: np.ndarray, fit: BoardFit) -> np.ndarray:
 def cell_crops(board: np.ndarray) -> np.ndarray:
     """(15, 15, CELL, CELL, 3) crops of the straightened board."""
     return board.reshape(15, CELL, 15, CELL, 3).transpose(0, 2, 1, 3, 4)
+
+
+PAD = CELL // 2  # border added around the board so a crop can slide past its edge
+RECENTRE_LIMIT = 0.3  # the most a crop moves to find its letter, in squares
+RECENTRE_TOL = 1.5  # letter already this many pixels from the middle: good enough
+
+
+def pad_board(board: np.ndarray) -> np.ndarray:
+    """The straightened board with a border, for `centred_crop`."""
+    return cv2.copyMakeBorder(board, PAD, PAD, PAD, PAD, cv2.BORDER_REPLICATE)
+
+
+def _window(padded: np.ndarray, r: int, c: int, dy: float, dx: float) -> np.ndarray:
+    cy = PAD + r * CELL + CELL / 2 + dy
+    cx = PAD + c * CELL + CELL / 2 + dx
+    shift = np.float32([[1, 0, CELL / 2 - cx], [0, 1, CELL / 2 - cy]])
+    return cv2.warpAffine(padded, shift, (CELL, CELL), flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_REPLICATE)  # fmt: skip
+
+
+def centred_crop(padded: np.ndarray, r: int, c: int) -> np.ndarray:
+    """The crop of square (r, c) moved so its letter is in the middle, if there is one.
+
+    Up to three steps, each a move to where the letter's box is, never more than RECENTRE_LIMIT
+    of a square from the grid."""
+    limit = RECENTRE_LIMIT * CELL
+    dy = dx = 0.0
+    for _ in range(3):
+        found = _letter_blob(_window(padded, r, c, dy, dx), strip_value=False)
+        if found is None:
+            break
+        _, _, (y0, y1, x0, x1), (m, _, _) = found
+        off_y, off_x = m + (y0 + y1) / 2 - CELL / 2, m + (x0 + x1) / 2 - CELL / 2
+        if abs(off_y) < RECENTRE_TOL and abs(off_x) < RECENTRE_TOL:
+            break
+        dy = float(np.clip(dy + off_y, -limit, limit))
+        dx = float(np.clip(dx + off_x, -limit, limit))
+    return _window(padded, r, c, dy, dx)
 
 
 def rack_crops(bgr: np.ndarray, fit: BoardFit) -> list[np.ndarray]:
@@ -124,13 +165,16 @@ def _bbox(pts: np.ndarray) -> tuple[int, int, int, int]:
 
 
 def _letter_blob(
-    crop: np.ndarray, rack: bool = False
+    crop: np.ndarray, rack: bool = False, strip_value: bool = True
 ) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int], tuple[int, int, int]] | None:
     """Find the letter in a square: (strokes, mask, box (y0, y1, x0, x1), (margin, ih, iw)).
 
     Letters are only ~50 grey levels from their textured tile, and last-played tiles have white
     letters, so: subtract a local background (median blur), pick the polarity from the tails,
-    threshold adaptively (Otsu) to find the letter's box."""
+    threshold adaptively (Otsu) to find the letter's box.
+
+    `strip_value` drops the small point value in the tile's top right corner. It assumes the
+    letter is centred, so finding where an off-centre letter is must not use it."""
     h, w = crop.shape[:2]
     m = int(0.08 * h)
     inner = cv2.cvtColor(crop[m : h - m, m : w - m], cv2.COLOR_BGR2GRAY)
@@ -161,8 +205,8 @@ def _letter_blob(
         bw, bh = stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
         if bw > 0.55 * iw and bh < 0.2 * ih:
             continue  # a wide flat band is a tile edge or shading, never a letter
-        if rack and cx > 0.62 * iw and cy < 0.38 * ih and area < 0.5 * areas.max():
-            continue  # the rack tile's point value
+        if strip_value and cx > 0.62 * iw and cy < 0.38 * ih and area < 0.5 * areas.max():
+            continue  # the tile's point value, in its top right corner
         keep.append(i)
     if not keep:
         return None
@@ -198,7 +242,7 @@ def glyph_mask(crop: np.ndarray, rack: bool = False) -> np.ndarray | None:
 
 def glyph_centre(crop: np.ndarray) -> tuple[float, float] | None:
     """Where the letter's box is centred in its square, as fractions (x, y) of the square."""
-    found = _letter_blob(crop)
+    found = _letter_blob(crop, strip_value=False)
     if found is None:
         return None
     _, _, (y0, y1, x0, x1), (m, _, _) = found
@@ -254,10 +298,15 @@ class ReaderModel:
     @classmethod
     def load(cls, path: Path) -> ReaderModel:
         with np.load(path) as data:
+            usable = (
+                "occ_plain" in data.files
+                and data["occ_plain"].shape == (N_FEATURES,)
+                and data["occ_bonus"].shape == (N_FEATURES,)
+            )
             occ = (
                 OccupancyModel(data["occ_plain"], data["occ_bonus"])
-                if "occ_plain" in data.files
-                else OccupancyModel.default()  # a model file from before squares were learned
+                if usable
+                else OccupancyModel.default()  # a file from before squares, or these features
             )
             return cls(glyph_x=data["glyph_x"], glyph_y=data["glyph_y"], occupancy=occ)
 
