@@ -70,13 +70,46 @@
     }
   }
 
-  // Any picture form sends as soon as a file is chosen or a photo taken: no extra tap.
+  // A chosen file or a captured photo is shown first, with "Read the board" and "Choose
+  // another": nothing is sent, and nothing in the game changes, until it is confirmed.
+  let staged = null;
+  function stageImage(blob, action, source) {
+    const box = document.getElementById("import-preview");
+    if (!box) { sendImage(action, blob, source); return; }  // a page with no preview area
+    const img = box.querySelector("img");
+    if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+    img.src = URL.createObjectURL(blob);
+    staged = { blob, action, source };
+    const error = document.getElementById("send-error");
+    if (error) error.hidden = true;
+    box.hidden = false;
+    box.querySelector("[data-go]").focus();
+  }
+  function initImportPreview() {
+    const box = document.getElementById("import-preview");
+    if (!box) return;
+    box.querySelector("[data-go]").addEventListener("click", () => {
+      if (staged) sendImage(staged.action, staged.blob, staged.source);
+    });
+    box.querySelector("[data-cancel]").addEventListener("click", () => {
+      const img = box.querySelector("img");
+      if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+      img.removeAttribute("src");
+      staged = null; box.hidden = true;
+      const error = document.getElementById("send-error");
+      if (error) error.hidden = true;
+      const again = document.getElementById("camera-button");
+      if (again) again.focus();
+    });
+  }
+
+  // Any picture form stages its file as soon as it is chosen or a photo taken.
   function initImageForms() {
     document.querySelectorAll("form.image-form").forEach((form) => {
       const input = form.querySelector("input[type=file]");
       input.addEventListener("change", () => {
         const source = form.querySelector("input[name=source]");
-        if (input.files.length) sendImage(form.action, input.files[0], source && source.value);
+        if (input.files.length) stageImage(input.files[0], form.action, source && source.value);
         input.value = "";
       });
     });
@@ -94,7 +127,7 @@
       e.preventDefault(); zone.classList.remove("drag");
     }));
     zone.addEventListener("drop", (e) => {
-      if (e.dataTransfer.files.length) sendImage(fileForm.action, e.dataTransfer.files[0], "auto");
+      if (e.dataTransfer.files.length) stageImage(e.dataTransfer.files[0], fileForm.action, "auto");
     });
   }
 
@@ -155,7 +188,11 @@
       canvas.getContext("2d").drawImage(video, 0, 0);
       frame.classList.remove("flash"); void frame.offsetWidth; frame.classList.add("flash");
       if (!stay) stop();
-      canvas.toBlob((blob) => blob && sendImage(form.action, blob, "photo", stay), "image/jpeg", 0.92);
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        if (stay) sendImage(form.action, blob, "photo", stay);  // collecting pictures: no pause
+        else stageImage(blob, form.action, "photo");
+      }, "image/jpeg", 0.92);
     }
     function captureIn(seconds) {
       clearInterval(timer);
@@ -202,6 +239,15 @@
       const next = at(nr, nc);
       if (next) { next.focus(); next.select(); }
     }
+
+    // "Go to this square" in the picture review focuses that square on the board.
+    document.querySelectorAll("a.goto-square").forEach((a) => a.addEventListener("click", (e) => {
+      const target = at(+a.dataset.r, +a.dataset.c);
+      if (!target) return;
+      e.preventDefault();
+      target.scrollIntoView({ block: "center" });
+      target.focus();
+    }));
 
     // Clicking a square fills in where the opponent's typed word starts.
     const oppRow = document.querySelector(".opp-type input[name=row]");
@@ -582,6 +628,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     initConfirms();
     initImageForms();
+    initImportPreview();
     initViewfinder();
     initUpload();
     initReview();

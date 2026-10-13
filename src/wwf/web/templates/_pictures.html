@@ -23,6 +23,15 @@
   {% with stay=False %}{% include "_viewfinder.html" %}{% endwith %}
   <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
 </div>
+<div class="import-preview card" id="import-preview" hidden role="group" aria-labelledby="import-title">
+  <h3 id="import-title">Check the picture</h3>
+  <img alt="The picture you chose, before it is read">
+  <p class="hint small">Confirmed tiles are kept as they are. New tiles and your rack are read into this turn for you to check before you confirm it. If the picture can't be used, nothing changes.</p>
+  <div class="actions">
+    <button type="button" class="primary" data-go>Read the board</button>
+    <button type="button" data-cancel>Choose another</button>
+  </div>
+</div>
 <div class="notice error" id="send-error" role="alert" hidden></div>
 {% if pictures %}
 <div class="pic-strip">

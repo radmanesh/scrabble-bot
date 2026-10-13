@@ -73,24 +73,31 @@
   {% endif %}
 
   {% if latest_picture %}
-  <details class="shot-details small">
-    <summary>The latest picture{% if has_quad %} (straightened){% endif %}</summary>
-    <p class="small"><a href="/game/{{ game.id }}/picture/{{ latest_picture.id }}/view?back=pictures">Open it in the viewer</a>
-      to compare the original and the straightened board, or to zoom.</p>
-    {% if has_quad %}
-    <img class="board-shot" src="/game/{{ game.id }}/picture/{{ latest_picture.id }}/board.png" alt="The board from the picture, straightened">
-    {% endif %}
-    <div class="shot-frame">
-      <img src="/game/{{ game.id }}/picture/{{ latest_picture.id }}" alt="The picture of the board">
-      {% if recognition and recognition.geometry %}
-      {% set g = recognition.geometry %}
-      <svg class="overlay" viewBox="0 0 {{ g.image_width }} {{ g.image_height }}" preserveAspectRatio="none" aria-hidden="true">
-        {% for row in g.cells %}{% for b in row %}<rect x="{{ b[0] }}" y="{{ b[1] }}" width="{{ b[2] }}" height="{{ b[3] }}"/>{% endfor %}{% endfor %}
-        {% for b in g.rack %}<rect class="rack-box" x="{{ b[0] }}" y="{{ b[1] }}" width="{{ b[2] }}" height="{{ b[3] }}"/>{% endfor %}
-      </svg>
-      {% endif %}
+  <section class="review-picture" aria-labelledby="review-title">
+    <h3 id="review-title">The picture this was read from</h3>
+    <div class="review-links">
+      <a class="button" href="/game/{{ game.id }}/picture/{{ latest_picture.id }}/view?back=pictures">Compare original and straightened board</a>
     </div>
-  </details>
+    {% if to_check %}
+    <h4>Squares to check <span class="count">({{ to_check | length }})</span></h4>
+    <p class="hint small">Each one shows the square from the picture, enlarged, next to what the
+      reader decided. Change it on the board if it's wrong.</p>
+    <ul class="to-check">
+      {% for sq in to_check[:12] %}
+      <li>
+        <img src="/game/{{ game.id }}/picture/{{ latest_picture.id }}/square/{{ sq.r }}/{{ sq.c }}.png"
+             alt="Row {{ sq.r + 1 }}, column {{ sq.c + 1 }} in the picture, enlarged" loading="lazy" width="90" height="90">
+        <span class="sq-text">
+          <b>Row {{ sq.r + 1 }}, column {{ sq.c + 1 }}</b><br>
+          {% if sq.locked %}Kept tile <b>{{ sq.letter }}</b>: it looked different in this picture.{% elif sq.letter %}Read as <b>{{ "blank " if sq.blank }}{{ sq.letter }}</b>.{% else %}Looked like it might hold a tile.{% endif %}
+          <br><a href="#sq-{{ sq.r }}-{{ sq.c }}" class="goto-square" data-r="{{ sq.r }}" data-c="{{ sq.c }}">Go to this square</a>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if to_check | length > 12 %}<p class="hint small">{{ to_check | length - 12 }} more are outlined in amber on the board.</p>{% endif %}
+    {% endif %}
+  </section>
   {% endif %}
 
   {% set proposed = {} %}
@@ -118,7 +125,7 @@
              data-r="{{ r }}" data-c="{{ c }}" data-where="{{ where }}"
              aria-label="{{ where }}, proposed {{ 'blank tile ' if pc.blank else 'tile ' }}{{ pc.letter }}">
       {% else %}
-      <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in open_tiles and game.started %} pending{% endif %}{% if (r, c) in locked %} locked{% endif %}{% if v and v.islower() %} blank{% endif %}{% if pc and not pc.new %} crossing{% endif %}{% if v and v | upper in suspect_letters and v.isupper() %} suspect{% endif %}"
+      <input id="sq-{{ r }}-{{ c }}" class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in open_tiles and game.started %} pending{% endif %}{% if (r, c) in locked %} locked{% endif %}{% if v and v.islower() %} blank{% endif %}{% if pc and not pc.new %} crossing{% endif %}{% if v and v | upper in suspect_letters and v.isupper() %} suspect{% endif %}"
              name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"{% if (r, c) in locked %} readonly tabindex="-1"{% endif %}
              data-r="{{ r }}" data-c="{{ c }}" data-where="{{ where }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
              autocapitalize="characters" spellcheck="false" inputmode="text"

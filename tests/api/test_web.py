@@ -568,3 +568,46 @@ def test_tile_count_warnings_mark_the_squares_without_changing_them(
     assert html.count("suspect") >= 2 and "may be one tile too many" in html
     assert "Nothing was changed for you" in html
     assert services.game(gid).board == before
+
+
+# --- picture import and review ---------------------------------------------------------------
+
+
+def test_choosing_a_picture_is_staged_before_it_is_read(client: TestClient) -> None:
+    home = client.get("/").text
+    assert 'id="import-preview"' in home and "Read the board" in home and "Choose another" in home
+    assert "nothing is saved until then" in home.lower()
+    gid = new_game(client)
+    page = client.get(f"/game/{gid}").text
+    assert (
+        'id="import-preview"' in page
+        and "If the picture can't be used, nothing changes" in page
+    )
+
+
+def test_unsure_squares_are_listed_with_an_enlarged_picture_of_each(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = new_game(client)
+    reader.next = reading({7: (5, "HELLO")}, "SATIRE?", unsure={(7, 6), (7, 8)})
+    send_picture(client, gid)
+    html = client.get(f"/game/{gid}").text
+    assert "Squares to check" in html and "(2)" in html
+    assert "Row 8, column 7" in html and "Read as <b>E</b>" in html
+    assert 'href="#sq-7-6"' in html and 'id="sq-7-6"' in html
+    pic = services.game(gid).pictures[0]
+    crop = client.get(f"/game/{gid}/picture/{pic.id}/square/7/6.png")
+    assert crop.status_code == 200 and crop.headers["content-type"] == "image/png"
+    assert client.get(f"/game/{gid}/picture/{pic.id}/square/15/0.png").status_code == 404
+
+
+def test_a_picture_that_cannot_be_used_leaves_the_game_unchanged(
+    client: TestClient, services: Services, reader: FakeReader
+) -> None:
+    gid = _started(client)
+    before = (services.game(gid).board, services.game(gid).rack, len(services.game(gid).turns))
+    r = client.post(f"/game/{gid}/image", files={"image": ("x.png", b"not an image", "image/png")})
+    assert r.status_code == 400 or r.status_code == 422
+    assert "isn&#39;t an image" in r.text or "isn't an image" in r.text
+    game = services.game(gid)
+    assert (game.board, game.rack, len(game.turns)) == before and not game.pictures

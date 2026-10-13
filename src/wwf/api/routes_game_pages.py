@@ -28,7 +28,7 @@ from wwf.api.routes_web import (
 )
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK
 from wwf.api.services import ApiError, Services
-from wwf.vision.perspective import warp_board_png
+from wwf.vision.perspective import square_png, warp_board_png
 
 router = APIRouter(include_in_schema=False)
 RECENT_PICTURES = 4
@@ -113,6 +113,24 @@ def _preview_payload(
 
 
 SHOWN_AT_FIRST = 5
+
+
+def _to_check(game: Game, rec: Any) -> list[dict[str, Any]]:
+    """Squares of the latest reading the reader was unsure of, for the picture review."""
+    latest = game.latest_picture
+    if rec is None or latest is None or not latest.quad or rec.geometry is None:
+        return []
+    out = []
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if not rec.needs_review[r][c]:
+                continue
+            v = game.board[r][c]
+            out.append({
+                "r": r, "c": c, "letter": (v or "").upper(), "blank": bool(v and v.islower()),
+                "locked": bool(game.base_board[r][c]),
+            })  # fmt: skip
+    return out
 
 
 def _turn_rows(game: Game) -> list[dict[str, Any]]:
@@ -245,6 +263,7 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         has_quad=bool(latest and latest.quad),
         turns=list(reversed(game.turns)),
         turn_rows=_turn_rows(game),
+        to_check=_to_check(game, rec),
         suspect_letters=set(bag.over) if bag is not None and bag.over else set(),
         open_player=game.open_player or game.player_to_move,
         **ctx,
@@ -605,6 +624,18 @@ def picture_file(request: Request, game_id: str, picture_id: str) -> Response:
         raise ApiError(404, "picture_not_found", {"picture": picture_id})
     pic, data = found
     return Response(data, media_type=pic.content_type, headers={"Cache-Control": "private"})
+
+
+@router.get("/game/{game_id}/picture/{picture_id}/square/{row}/{col}.png", response_class=Response)
+def picture_square(request: Request, game_id: str, picture_id: str, row: int, col: int) -> Response:
+    """One square of the picture, enlarged, for comparing a doubtful letter by eye."""
+    svc = get_services(request)
+    game = svc.games.get(game_id)
+    found = svc.picture(game, picture_id) if game is not None else None
+    if found is None or not found[0].quad or not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
+        raise ApiError(404, "picture_not_found", {"picture": picture_id})
+    png = square_png(found[1], found[0].quad, row, col)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
 
 
 @router.get("/game/{game_id}/picture/{picture_id}/view", response_class=HTMLResponse)

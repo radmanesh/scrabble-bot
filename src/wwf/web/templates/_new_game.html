@@ -16,6 +16,16 @@
   <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
 </section>
 
+<div class="import-preview card" id="import-preview" hidden role="group" aria-labelledby="import-title">
+  <h3 id="import-title">Check the picture</h3>
+  <img alt="The picture you chose, before it is read">
+  <p class="hint small">The board and your rack are read from this picture. You check and correct them on the next page before the starting position is confirmed. Nothing is saved until then.</p>
+  <div class="actions">
+    <button type="button" class="primary" data-go>Read the board</button>
+    <button type="button" data-cancel>Choose another</button>
+  </div>
+</div>
+
 <section class="card secondary-card">
   <form id="file-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
     <input type="hidden" name="source" value="auto">
