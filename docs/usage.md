@@ -103,14 +103,23 @@ answers. Each of these "fixtures" is an image plus a JSON label holding the true
 The app has a collection mode for making them:
 
 ```sh
-uv run wwf-serve --host 0.0.0.0 --collect-fixtures
+uv run wwf-serve --collect-fixtures
 ```
 
-1. **Take pictures.** Open the app on your phone at `http://<your computer's IP>:8000`.
-   - Every photo you take, and every screenshot you upload, is saved straight into
-     `assets/fixtures/` on the computer running the server.
-   - The page comes back to the camera after each one, so you can take many in a row.
-   - Camera photos are named `photo-<date>-<time>.jpg`. Uploaded PNGs count as screenshots
+1. **Take pictures.** There are two ways.
+   - **Mac webcam (the game on your phone):** run the server on the Mac and open
+     <http://127.0.0.1:8000> there. Click **Take a photo of the board** and hold the phone up to
+     the webcam.
+     - Press **space** (or **Capture**) for each picture, or **In 3 s** for a countdown.
+     - The camera stays open between shots, and the preview is mirrored like a selfie camera.
+       Saved pictures are not mirrored.
+     - **Done** or Escape closes it.
+   - **Another device's camera:** start with `--host 0.0.0.0` and open
+     `http://<your computer's IP>:8000` on it. Its camera app opens for each picture.
+
+   Either way:
+   - Every picture is saved straight into `assets/fixtures/` on the computer running the server.
+   - Camera pictures are named `photo-<date>-<time>.jpg`. Uploaded PNGs count as screenshots
      (`screenshot-...png`); other uploads count as photos.
 2. **Label them.** On your computer, open **Fixtures** in the top bar (`/fixtures`).
    - It lists every picture and whether it has a label yet.

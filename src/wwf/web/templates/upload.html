@@ -26,12 +26,18 @@
   </form>
 
   {# In-page viewfinder, for computers with a webcam (app.js shows it when the browser allows). #}
-  <div id="viewfinder" class="viewfinder" hidden>
-    <video id="viewfinder-video" playsinline muted autoplay></video>
-    <div class="actions">
-      <button type="button" id="shutter" class="primary big">Capture</button>
-      <button type="button" id="viewfinder-cancel">Cancel</button>
+  <div id="viewfinder" class="viewfinder" hidden data-stay="{{ 'yes' if fixtures_mode else '' }}">
+    <div class="viewfinder-frame">
+      <video id="viewfinder-video" playsinline muted autoplay></video>
+      <div class="countdown" id="countdown" hidden></div>
     </div>
+    <div class="actions">
+      <button type="button" id="shutter" class="primary big">Capture <span class="kbd">space</span></button>
+      <button type="button" id="shutter-timer">In 3 s</button>
+      <button type="button" id="viewfinder-cancel">{{ "Done" if fixtures_mode else "Cancel" }}</button>
+    </div>
+    <p class="hint small">Hold the phone up to the camera with the game on screen.
+      {% if fixtures_mode %}The camera stays open: press space for each new picture.{% endif %}</p>
   </div>
 
   <p class="hint small">Get the whole phone screen in the frame, board and rack included. Some angle or glare is fine.</p>

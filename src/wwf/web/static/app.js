@@ -35,7 +35,9 @@
     }
   }
 
-  async function sendImage(action, blob, source) {
+  // With stay=true (fixture collection with the webcam), a successful upload refreshes the banner
+  // in place instead of leaving the page, so the camera stays open for the next picture.
+  async function sendImage(action, blob, source, stay) {
     const progress = document.getElementById("send-progress");
     const error = document.getElementById("send-error");
     if (progress) progress.hidden = false;
@@ -47,8 +49,16 @@
       body.append("image", image, image.type === "image/png" ? "board.png" : "board.jpg");
       body.append("source", source || "auto");
       const res = await fetch(action, { method: "POST", body: body });
-      if (res.ok && res.redirected) { window.location.href = res.url; return; }
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      if (res.ok && res.redirected) {
+        const banner = doc.querySelector(".fixture-banner");
+        const current = document.querySelector(".fixture-banner");
+        if (!stay || !banner || !current) { window.location.href = res.url; return; }
+        current.replaceWith(banner);
+        if (progress) progress.hidden = true;
+        document.querySelectorAll(".busy").forEach((el) => el.classList.remove("busy"));
+        return;
+      }
       const msg = doc.querySelector(".notice.error");
       throw new Error(msg ? msg.textContent.trim() : "Upload failed (" + res.status + ").");
     } catch (e) {
@@ -114,10 +124,15 @@
     const button = document.getElementById("camera-button");
     const input = button.querySelector("input");
     const finder = document.getElementById("viewfinder");
+    const frame = finder.querySelector(".viewfinder-frame");
     const video = document.getElementById("viewfinder-video");
+    const countdown = document.getElementById("countdown");
     const form = document.getElementById("camera-form");
+    const stay = finder.dataset.stay === "yes"; // fixture collection: keep the camera open
     let stream = null;
+    let timer = null;
     const stop = () => {
+      clearInterval(timer); countdown.hidden = true;
       if (stream) stream.getTracks().forEach((t) => t.stop());
       stream = null; finder.hidden = true; form.hidden = false;
     };
@@ -132,16 +147,41 @@
         input.click(); // camera refused or busy: choose a file instead
         return;
       }
+      // A laptop's camera faces the user: mirror the preview like a selfie camera so the phone
+      // moves the way you expect. The captured frame itself is never mirrored.
+      const facing = stream.getVideoTracks()[0].getSettings().facingMode;
+      video.classList.toggle("mirrored", facing !== "environment");
       video.srcObject = stream;
       form.hidden = true; finder.hidden = false;
     });
-    document.getElementById("viewfinder-cancel").addEventListener("click", stop);
-    document.getElementById("shutter").addEventListener("click", () => {
+
+    function capture() {
+      if (!stream || !video.videoWidth) return;
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth; canvas.height = video.videoHeight;
       canvas.getContext("2d").drawImage(video, 0, 0);
-      stop();
-      canvas.toBlob((blob) => blob && sendImage(form.action, blob, "photo"), "image/jpeg", 0.92);
+      frame.classList.remove("flash"); void frame.offsetWidth; frame.classList.add("flash");
+      if (!stay) stop();
+      canvas.toBlob((blob) => blob && sendImage(form.action, blob, "photo", stay), "image/jpeg", 0.92);
+    }
+    function captureIn(seconds) {
+      clearInterval(timer);
+      let left = seconds;
+      countdown.textContent = left; countdown.hidden = false;
+      timer = setInterval(() => {
+        left -= 1;
+        if (left > 0) { countdown.textContent = left; return; }
+        clearInterval(timer); countdown.hidden = true; capture();
+      }, 1000);
+    }
+
+    document.getElementById("shutter").addEventListener("click", capture);
+    document.getElementById("shutter-timer").addEventListener("click", () => captureIn(3));
+    document.getElementById("viewfinder-cancel").addEventListener("click", stop);
+    document.addEventListener("keydown", (e) => {
+      if (finder.hidden || e.repeat) return;
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); capture(); }
+      if (e.key === "Escape") stop();
     });
   }
 
