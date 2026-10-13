@@ -362,3 +362,10 @@ a:focus-visible, button:focus-visible, summary:focus-visible, select:focus-visib
 .board-card.zoomed .guide-rows { display: none; }
 .board-card.zoomed .board { margin-left: 1.7em; font-size: 1.1rem; }
 @media (forced-colors: active) { .cell.proposed, .cell.pending, .cell.review, .cell.start-marker { outline-color: Highlight; } }
+
+/* settings */
+.scope { margin-top: 0; }
+.advanced > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
+fieldset.plain { border: 0; padding: 0; margin: 8px 0 0; min-width: 0; }
+.everyday { display: grid; gap: 14px; }
+.advanced .solver:not(:has(input[type=radio]:checked)) .params { display: none; }

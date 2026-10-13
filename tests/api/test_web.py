@@ -449,3 +449,63 @@ def test_pass_and_undo_say_what_they_did(client: TestClient) -> None:
     assert "The opponent&#39;s pass was recorded." in r.text
     r = client.post(f"/game/{gid}/undo", follow_redirects=True)
     assert "was reopened" in r.text
+
+
+# --- settings --------------------------------------------------------------------------------
+
+
+def test_settings_use_everyday_words_and_keep_the_stored_values(client: TestClient) -> None:
+    html = client.get("/options").text
+    for label in ("Maximum suggestions", "Minimum score", "Include blank tiles",
+                  "Tie preference", "Word list"):  # fmt: skip
+        assert label in html
+    assert "Higher score, then the better tiles kept" in html
+    assert 'value="score_then_leave"' in html and 'name="p.anchor_trie.tie_break"' in html
+    assert "<summary>Advanced" in html and "not available yet" in html
+    assert "Smart brute force" in html.split("Advanced")[1]  # algorithm names are advanced
+
+
+def test_settings_say_what_they_apply_to_and_link_back(client: TestClient) -> None:
+    plain = client.get("/options").text
+    assert "← Back to games" in plain and "games you start" in plain
+    gid = new_game(client)
+    client.post(f"/game/{gid}/rename", data={"name": "Sunday game"})
+    inside = client.get(f"/options?game={gid}").text
+    assert "← Back to Sunday game" in inside and "apply to <b>Sunday game</b>" in inside
+    assert "Save and back to the game" in inside and ">Cancel<" in inside
+
+
+def test_save_and_back_returns_to_the_game_with_a_message(
+    client: TestClient, services: Services
+) -> None:
+    gid = new_game(client)
+    r = client.post(
+        "/options",
+        data={"solver_id": "anchor_trie", "game_id": gid, "dictionary_id": "words",
+              "p.anchor_trie.max_results": "7", "then": "game"},
+        follow_redirects=True,
+    )  # fmt: skip
+    assert r.url.path == f"/game/{gid}" and "Settings saved" in r.text
+    assert services.game(gid).params["max_results"] == 7
+
+
+def test_changing_settings_clears_stale_suggestions(client: TestClient, services: Services) -> None:
+    gid = _solved(client)
+    game = services.game(gid)
+    assert game.last_result is not None
+
+    def save(max_results: object) -> None:
+        client.post(
+            "/options",
+            data={
+                "solver_id": "anchor_trie",
+                "game_id": gid,
+                "dictionary_id": game.dictionary_id,
+                "p.anchor_trie.max_results": str(max_results),
+            },
+        )
+
+    save(game.params["max_results"])
+    assert services.game(gid).last_result is not None  # nothing changed, nothing dropped
+    save(3)
+    assert services.game(gid).last_result is None

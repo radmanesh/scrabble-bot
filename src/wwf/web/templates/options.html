@@ -1,56 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Options · WWF Solver{% endblock %}
+{% block title %}Settings · WWF Solver{% endblock %}
 {% block body_class %}page-options{% endblock %}
 {% block content %}
-<h1>Options</h1>
-{% if saved %}<p class="notice ok">Saved{% if game %} for this game{% endif %}.
+<p class="back-link">
+  {% if game %}<a href="/game/{{ game.id }}">← Back to {{ game.name }}</a>
+  {% else %}<a href="/">← Back to games</a>{% endif %}
+</p>
+<h1>Settings</h1>
+<p class="hint scope">
+  {% if game %}These settings apply to <b>{{ game.name }}</b> and will be used for games you start
+    from now on. Other games keep theirs.
+  {% else %}These settings are used for games you start from now on. A game you have already
+    started keeps its own; change it from inside that game.{% endif %}
+</p>
+{% if saved %}<p class="notice ok" role="status">Settings saved{% if game %} for {{ game.name }}{% endif %}.
   {% if game %}<a href="/game/{{ game.id }}">Back to the game</a>{% endif %}</p>{% endif %}
+
+{% macro param_field(sid, p, value) %}
+  {% set field = "p." ~ sid ~ "." ~ p.name %}
+  {% set label = param_labels.get(p.name, p.label) %}
+  {% set help = param_help.get(p.name, p.help) %}
+  <div class="param">
+    {% if p.type == "bool" %}
+      <input type="hidden" name="{{ field }}" value="false">
+      <label><input type="checkbox" name="{{ field }}" value="true" {% if value | truthy %}checked{% endif %}>
+        {{ label }}</label>
+    {% else %}
+      <label for="{{ field }}">{{ label }}</label>
+      {% if p.type == "choice" %}
+      <select id="{{ field }}" name="{{ field }}">
+        {% for ch in p.choices %}<option value="{{ ch }}" {% if ch == value %}selected{% endif %}>{{ choice_labels.get(ch, ch) }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <input id="{{ field }}" name="{{ field }}" type="number" value="{{ value }}" inputmode="numeric"
+             step="{{ '1' if p.type == 'int' else 'any' }}"
+             {% if p.min is not none %}min="{{ p.min | int if p.type == 'int' else p.min }}"{% endif %}
+             {% if p.max is not none %}max="{{ p.max | int if p.type == 'int' else p.max }}"{% endif %}>
+      {% endif %}
+    {% endif %}
+    {% if help %}<p class="hint small">{{ help }}</p>{% endif %}
+  </div>
+{% endmacro %}
 
 <form id="options-form" action="/options" method="post">
   <input type="hidden" name="game_id" value="{{ game.id if game else '' }}">
 
   <fieldset class="card">
-    <legend>Solver</legend>
-    {% for s in solvers %}
-    <div class="solver{% if not s.enabled %} planned{% endif %}">
-      <label class="solver-choice">
-        <input type="radio" name="solver_id" value="{{ s.id }}"
-               {% if s.id == chosen %}checked{% endif %}{% if not s.enabled %} disabled{% endif %}>
-        <span class="solver-name">{{ s.display_name }}</span>
-        {% if not s.enabled %}<span class="badge">planned</span>{% endif %}
-      </label>
-      {% if s.description %}<p class="hint">{{ s.description }}</p>{% endif %}
-
-      {% if s.enabled and s.params %}
-      <div class="params">
-        {% for p in s.params %}
-        {% set field = "p." ~ s.id ~ "." ~ p.name %}
-        {% set value = values[s.id][p.name] %}
-        <div class="param">
-          {% if p.type == "bool" %}
-            <input type="hidden" name="{{ field }}" value="false">
-            <label><input type="checkbox" name="{{ field }}" value="true" {% if value | truthy %}checked{% endif %}>
-              {{ p.label }}</label>
-          {% else %}
-            <label for="{{ field }}">{{ p.label }}</label>
-            {% if p.type == "choice" %}
-            <select id="{{ field }}" name="{{ field }}">
-              {% for ch in p.choices %}<option value="{{ ch }}" {% if ch == value %}selected{% endif %}>{{ ch }}</option>{% endfor %}
-            </select>
-            {% else %}
-            <input id="{{ field }}" name="{{ field }}" type="number" value="{{ value }}"
-                   step="{{ '1' if p.type == 'int' else 'any' }}"
-                   {% if p.min is not none %}min="{{ p.min | int if p.type == 'int' else p.min }}"{% endif %}
-                   {% if p.max is not none %}max="{{ p.max | int if p.type == 'int' else p.max }}"{% endif %}>
-            {% endif %}
-          {% endif %}
-          {% if p.help %}<p class="hint small">{{ p.help }}</p>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
+    <legend>Suggestions</legend>
+    {% for s in solvers %}{% if s.id == chosen and s.enabled %}
+    <div class="params everyday">
+      {% for p in s.params %}{{ param_field(s.id, p, values[s.id][p.name]) }}{% endfor %}
     </div>
-    {% endfor %}
+    {% endif %}{% endfor %}
   </fieldset>
 
   <fieldset class="card">
@@ -62,8 +63,38 @@
       {% endfor %}
     </select>
     {% for d in dictionaries %}{% if d.description %}<p class="hint small"><b>{{ d.label }}:</b> {{ d.description }}</p>{% endif %}{% endfor %}
+    <p class="hint small">Changing the word list clears the suggestions on screen, because they
+      were found with the old one.</p>
   </fieldset>
 
-  <div class="actions"><button type="submit" class="primary">Save</button></div>
+  <details class="card advanced">
+    <summary>Advanced: how moves are found</summary>
+    <fieldset class="plain">
+      <legend class="sr-only">Move-finding method</legend>
+      {% for s in solvers %}
+      <div class="solver{% if not s.enabled %} planned{% endif %}">
+        <label class="solver-choice">
+          <input type="radio" name="solver_id" value="{{ s.id }}"
+                 {% if s.id == chosen %}checked{% endif %}{% if not s.enabled %} disabled{% endif %}>
+          <span class="solver-name">{{ s.display_name }}</span>
+          {% if not s.enabled %}<span class="badge">not available yet</span>{% endif %}
+        </label>
+        {% if s.description %}<p class="hint">{{ s.description }}</p>{% endif %}
+        {% if s.enabled and s.params and s.id != chosen %}
+        <div class="params">
+          {% for p in s.params %}{{ param_field(s.id, p, values[s.id][p.name]) }}{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </fieldset>
+  </details>
+
+  <div class="actions">
+    <button type="submit" class="primary">Save</button>
+    {% if game %}<button type="submit" name="then" value="game">Save and back to the game</button>
+    <a class="button" href="/game/{{ game.id }}">Cancel</a>
+    {% else %}<a class="button" href="/">Cancel</a>{% endif %}
+  </div>
 </form>
 {% endblock %}

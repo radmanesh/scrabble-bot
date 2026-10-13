@@ -158,7 +158,10 @@ class Services:
         return game
 
     def set_options(self, g: Game, solver_id: str, params: dict[str, Any], did: str | None) -> None:
+        before = (g.solver_id, g.params, g.dictionary_id)
         g.solver_id, g.params, g.dictionary_id = self.check_options(solver_id, params, did)
+        if (g.solver_id, g.params, g.dictionary_id) != before:
+            g.last_result = None  # suggestions were made with the old settings
 
     # --- recognition ------------------------------------------------------------------------
 

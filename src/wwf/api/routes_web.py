@@ -26,6 +26,25 @@ templates = Jinja2Templates(directory=WEB_DIR / "templates")
 templates.env.filters["truthy"] = lambda v: v is True or str(v).lower() in ("true", "1", "on")
 
 OPTIONS_COOKIE = "wwf_options"
+# Everyday wording for the solver's settings. The option names and values the server stores and
+# the solvers read are unchanged: only what the page says about them.
+PARAM_LABELS = {
+    "max_results": "Maximum suggestions",
+    "min_score": "Minimum score",
+    "allow_blank_branching": "Include blank tiles",
+    "tie_break": "Tie preference",
+}
+PARAM_HELP = {
+    "max_results": "How many of the best moves to list.",
+    "min_score": "Leave out moves that score less than this.",
+    "allow_blank_branching": "Try every letter for a blank on your rack. Turning this off is "
+    "faster but ignores your blanks.",
+    "tie_break": "What to prefer among moves with the same score.",
+}
+CHOICE_LABELS = {
+    "score_then_leave": "Higher score, then the better tiles kept",
+    "score_only": "Higher score only",
+}
 BONUS_LABELS = {"T": "TW", "D": "DW", "t": "TL", "d": "DL", "*": "★", ".": ""}
 BONUS_CLASSES = {"T": "tw", "D": "dw", "t": "tl", "d": "dl", "*": "ctr", ".": ""}
 
@@ -231,6 +250,9 @@ def _options_context(svc: Services, saved: dict[str, Any], game: Game | None) ->
         "chosen": chosen,
         "dictionaries": svc.dictionaries_response().dictionaries,
         "dictionary_id": dictionary,
+        "param_labels": PARAM_LABELS,
+        "param_help": PARAM_HELP,
+        "choice_labels": CHOICE_LABELS,
     }
 
 
@@ -249,7 +271,7 @@ def options_page(request: Request, game: str | None = None, saved: int = 0) -> H
 @router.post("/options")
 async def options_submit(
     request: Request, solver_id: str = Form(...), dictionary_id: str = Form(""),
-    game_id: str = Form(""),
+    game_id: str = Form(""), then: str = Form(""),
 ) -> Response:  # fmt: skip
     svc = get_services(request)
     form = await request.form()
@@ -276,7 +298,12 @@ async def options_submit(
         svc.set_options(g, sid, full, did)
         svc.games.save(g)
     cookie = {"solver_id": sid, "params": all_params, "dictionary_id": did}
-    target = f"/options?saved=1&game={g.id}" if g is not None else "/options?saved=1"
+    if g is not None and then == "game":
+        g.flash = "Settings saved. Suggestions will use them the next time you find a move."
+        svc.games.save(g)
+        target = f"/game/{g.id}"
+    else:
+        target = f"/options?saved=1&game={g.id}" if g is not None else "/options?saved=1"
     response = _redirect(target)
     response.set_cookie(
         OPTIONS_COOKIE,
