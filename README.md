@@ -3,6 +3,10 @@
 Takes an image of a Words With Friends game screen, reconstructs the board and rack, and
 returns the highest-scoring legal moves. Built milestone by milestone from the build spec.
 
+**Full guide: [docs/usage.md](docs/usage.md)** covers installing, the board and move model,
+scoring and validation, solvers and their parameters, choosing a dictionary, configuration, tests,
+and extending the code.
+
 ## Development
 
 ```sh
