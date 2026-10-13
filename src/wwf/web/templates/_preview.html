@@ -6,6 +6,7 @@
   {{ "Across" if m.direction == "across" else "Down" }} from row {{ m.start[0] + 1 }}, column {{ m.start[1] + 1 }}.
   {% for w in m.score.words %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}
   {% if m.score.bingo_bonus %} + bingo {{ m.score.bingo_bonus }}{% endif %}
+  {% if m.leave %} · you keep <span class="kbd">{{ m.leave }}</span>{% endif %}
 </p>
 <div class="board preview" aria-label="Board after {{ m.word }}">
   {% for r in range(size) %}
@@ -18,3 +19,7 @@
   </div>
   {% endfor %}
 </div>
+<div class="preview-play">{% include "_play_button.html" %}</div>
+{% if oob %}
+<div id="thumb-bar" class="thumb-bar" hx-swap-oob="true">{% include "_play_button.html" %}</div>
+{% endif %}

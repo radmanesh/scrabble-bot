@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ game.name }} · WWF Solver{% endblock %}
+{% block body_class %}page-game{% endblock %}
+{% block content %}
+<div class="game" data-game="{{ game.id }}">
+  {% include "_game_header.html" %}
+
+  {% if drew is not none %}
+  <section class="card draw-prompt">
+    <form action="/game/{{ game.id }}/draw" method="post">
+      {% set missing = 7 - drew | length %}
+      <h2>What did you draw?</h2>
+      <p>{% if drew %}You kept <span class="kbd">{{ drew }}</span>. Type the {{ missing }}
+        new tile{{ "s" if missing != 1 }} you drew{% else %}You used all seven tiles. Type the
+        seven you drew{% endif %} (<span class="kbd">?</span> for a blank).</p>
+      <div class="draw-row">
+        <input name="letters" autofocus autocomplete="off" autocapitalize="characters"
+               spellcheck="false" maxlength="{{ missing }}" placeholder="{{ "·" * missing }}"
+               aria-label="Tiles you drew">
+        <button type="submit" name="action" value="add">Add</button>
+        <button type="submit" name="action" value="solve" class="primary">Add and solve</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if game.phase == "opponent_turn" %}
+    {% include "_opponent_panel.html" %}
+  {% elif pending %}
+    {% include "_pending_card.html" %}
+  {% endif %}
+
+  {% include "_board_form.html" %}
+
+  {% if game.phase == "my_turn" %}
+    {% include "_moves.html" %}
+    <section class="card pictures-card">
+      {% include "_pictures.html" %}
+    </section>
+  {% endif %}
+
+  {% include "_history.html" %}
+
+  {% if game.phase == "my_turn" %}
+  <div id="thumb-bar" class="thumb-bar">
+    {% if result and result.moves %}{% include "_play_button.html" %}
+    {% else %}<button type="submit" form="board-form" name="action" value="solve" class="primary big">Solve</button>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

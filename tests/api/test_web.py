@@ -11,7 +11,7 @@ def _new_review(client: TestClient) -> str:
     r = client.post("/new", follow_redirects=False)
     assert r.status_code == 303
     location: str = r.headers["location"]
-    assert location.startswith("/review/")
+    assert location.startswith("/game/")
     return location.rsplit("/", 1)[1]
 
 
@@ -38,23 +38,23 @@ def test_upload_page_puts_the_camera_first(client: TestClient) -> None:
     assert "/static/htmx.min.js" in html
 
 
-def test_review_offers_retake_then_upload(client: TestClient) -> None:
+def test_game_page_offers_camera_then_upload(client: TestClient) -> None:
     sid = _new_review(client)
-    html = client.get(f"/review/{sid}").text
-    retake = html.index("Take next turn")
+    html = client.get(f"/game/{sid}").text
+    retake = html.index("Take a picture")
     assert html.index('capture="environment"') < html.index("Upload instead")
     assert retake < html.index("Upload instead")
     # on a computer, Retake opens the same webcam viewfinder as the upload page
     assert 'id="camera-button"' in html and 'id="viewfinder"' in html
 
 
-def test_upload_redirects_to_review(client: TestClient, png_bytes: bytes) -> None:
+def test_upload_starts_a_game(client: TestClient, png_bytes: bytes) -> None:
     r = client.post("/upload", files={"image": ("s.png", png_bytes, "image/png")},
                     follow_redirects=False)  # fmt: skip
     assert r.status_code == 303
     html = client.get(r.headers["location"]).text
     assert "/api/v1/session/" in html and "/image" in html
-    assert "recognition isn't built yet" in html
+    assert "type the board in" in html
 
 
 def test_upload_rejects_non_image(client: TestClient) -> None:
@@ -65,35 +65,35 @@ def test_upload_rejects_non_image(client: TestClient) -> None:
 
 def test_three_steps_to_moves(client: TestClient) -> None:
     sid = _new_review(client)
-    html = client.get(f"/review/{sid}").text
+    html = client.get(f"/game/{sid}").text
     assert html.count('class="cell ') == 225 + 7
     assert 'placeholder="TW"' in html
 
     form = _board_form({7: (5, "HELLO")}, "SATIRE?") | {"action": "solve"}
-    r = client.post(f"/review/{sid}", data=form, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == f"/results/{sid}"
+    r = client.post(f"/game/{sid}/board", data=form, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/game/{sid}"
 
-    html = client.get(f"/results/{sid}").text
+    html = client.get(f"/game/{sid}").text
     assert "Smart brute force" in html
     assert html.count("<tr") == 26  # header + 25 moves
     assert "AERIEST" in html
     assert re.search(r'class="cell[^"]* new', html)  # preview highlights the new tiles
 
-    preview = client.get(f"/results/{sid}/preview/3").text
+    preview = client.get(f"/game/{sid}/preview/3").text
     assert "<h2>" in preview and "board preview" in preview
 
 
 def test_review_rejects_bad_cells(client: TestClient) -> None:
     sid = _new_review(client)
     form = _board_form({7: (5, "HELLO")}, "AB") | {"c-0-0": "1", "action": "save"}
-    r = client.post(f"/review/{sid}", data=form)
+    r = client.post(f"/game/{sid}/board", data=form)
     assert r.status_code == 422
     assert "Row 1, column 1" in r.text
 
 
 def test_solve_needs_a_rack(client: TestClient) -> None:
     sid = _new_review(client)
-    r = client.post(f"/review/{sid}", data=_board_form({}, "") | {"action": "solve"})
+    r = client.post(f"/game/{sid}/board", data=_board_form({}, "") | {"action": "solve"})
     assert r.status_code == 422
     assert "rack" in r.text
 
@@ -101,7 +101,7 @@ def test_solve_needs_a_rack(client: TestClient) -> None:
 def test_lowercase_cell_is_a_blank(client: TestClient) -> None:
     sid = _new_review(client)
     form = _board_form({7: (5, "HELlO")}, "S") | {"action": "save"}
-    client.post(f"/review/{sid}", data=form)
+    client.post(f"/game/{sid}/board", data=form)
     state = client.get(f"/api/v1/session/{sid}").json()
     assert state["board"][7][5:10] == ["H", "E", "L", "l", "O"]
 
@@ -148,6 +148,13 @@ def test_options_save_rejects_out_of_range(client: TestClient) -> None:
 
 
 def test_expired_session_page(client: TestClient) -> None:
-    r = client.get("/review/doesnotexist")
+    r = client.get("/game/doesnotexist")
     assert r.status_code == 404
-    assert "Session expired" in r.text
+    assert "Game not found" in r.text
+
+
+def test_old_review_and_results_links_redirect(client: TestClient) -> None:
+    sid = _new_review(client)
+    for old in (f"/review/{sid}", f"/results/{sid}"):
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == f"/game/{sid}"

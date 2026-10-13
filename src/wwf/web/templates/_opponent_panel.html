@@ -1,0 +1,42 @@
+<section class="card opponent-panel">
+  <h2>Opponent's turn</h2>
+  <p class="hint">Once they've played, bring the board up to date with a picture, or type their
+    word.</p>
+</section>
+{% if pending %}{% include "_pending_card.html" %}{% endif %}
+<div class="opp-ways">
+  <section class="card pictures-card">
+    {% include "_pictures.html" %}
+  </section>
+  <form class="card opp-type" action="/game/{{ game.id }}/opponent" method="post" autocomplete="off">
+    <h2>Or type their word</h2>
+    <label>Word
+      <input name="word" value="{{ form_values.word }}" required autocapitalize="characters"
+             spellcheck="false" placeholder="e.g. ZEAL">
+    </label>
+    <div class="opp-where">
+      <label>Row <input name="row" type="number" min="1" max="15" inputmode="numeric"
+                        value="{{ form_values.row }}" required></label>
+      <label>Column <input name="col" type="number" min="1" max="15" inputmode="numeric"
+                           value="{{ form_values.col }}" required></label>
+      <label>Direction
+        <select name="direction">
+          <option value="across" {% if form_values.direction != "down" %}selected{% endif %}>→ across</option>
+          <option value="down" {% if form_values.direction == "down" %}selected{% endif %}>↓ down</option>
+        </select>
+      </label>
+    </div>
+    <p class="hint small">The row and column of the word's first letter, counted from 1. Write the
+      whole word, including letters already on the board. Lowercase marks a blank. Clicking a
+      square on the board fills in the start.</p>
+    {% if force_offer %}
+    <label class="check"><input type="checkbox" name="force" value="1"> The game accepted this
+      word: log it even though it's not in the word list</label>
+    {% endif %}
+    <button type="submit" class="primary">Add their move</button>
+  </form>
+</div>
+<form action="/game/{{ game.id }}/pass" method="post" class="actions small-actions">
+  <input type="hidden" name="who" value="opponent">
+  <button type="submit" class="link">They passed</button>
+</form>

@@ -128,7 +128,7 @@ class SessionState(Envelope):
     params: dict[str, Any]
     dictionary_id: str
     has_result: bool
-    expires_in_s: int
+    expires_in_s: int  # seconds until the session expires; -1 for a saved game, which never does
 
 
 # --- solving ---------------------------------------------------------------------------------
@@ -150,6 +150,51 @@ class ScoreOut(ApiModel):
     total: int
     bingo_bonus: int
     words: list[WordOut]
+
+
+class TurnOut(ApiModel):
+    n: int
+    player: Literal["me", "opponent"]
+    kind: Literal["play", "pass"]
+    word: str
+    direction: str
+    start: tuple[int, int]
+    points: int
+    bingo: int
+    words: list[WordOut]
+    placements: list[PlacementOut]
+    source: str
+    forced: bool
+    at: str
+
+
+class GameSummary(ApiModel):
+    id: str
+    name: str
+    phase: Literal["my_turn", "opponent_turn"]
+    scores: dict[str, int]
+    turns: int
+    updated_at: str
+
+
+class GamesResponse(Envelope):
+    games: list[GameSummary]
+
+
+class GameOut(Envelope):
+    id: str
+    name: str
+    phase: Literal["my_turn", "opponent_turn"]
+    board: BoardGrid
+    rack: str
+    scores: dict[str, int]
+    in_bag: int
+    unseen: dict[str, int]
+    turns: list[TurnOut]
+    solver_id: str
+    dictionary_id: str
+    created_at: str
+    updated_at: str
 
 
 class MoveOut(ApiModel):

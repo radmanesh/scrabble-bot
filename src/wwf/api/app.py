@@ -23,7 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from wwf.api.schemas import HealthResponse
 from wwf.api.services import ApiError, Recognizer, Services, Settings
 from wwf.api.session import SessionStore
-from wwf.core.config import assets_dir, load_board_config
+from wwf.core.config import assets_dir, load_board_config, project_root
 from wwf.core.dictionary import DictionaryRegistry, default_dictionary_registry
 from wwf.solvers.registry import SolverRegistry, load_registry
 
@@ -72,9 +72,11 @@ def create_app(
         # The real server (wwf-serve): read pictures with the trained board reader. Tests pass
         # their own Settings and so never load or retrain the real model.
         fixtures = os.environ.get("WWF_FIXTURES_DIR")
+        games = os.environ.get("WWF_GAMES_DIR")
         settings = Settings(
             fixtures_dir=Path(fixtures) if fixtures else None,
             model_path=assets_dir() / "models" / "reader.npz",
+            games_dir=Path(games) if games else project_root() / "data" / "games",
         )
     cfg = load_board_config()
     if recognizer is None and settings.model_path is not None:
@@ -101,7 +103,7 @@ def create_app(
         async def sweep() -> None:
             while True:
                 await asyncio.sleep(60)
-                removed = svc.sessions.sweep()
+                removed = svc.sessions.sweep() + svc.games.sweep()
                 if removed:
                     log.info("swept %d expired sessions", removed)
 
@@ -167,12 +169,21 @@ def create_app(
             sessions=len(svc.sessions),
         )
 
-    from wwf.api import routes_options, routes_recognize, routes_solve, routes_web
+    from wwf.api import (
+        routes_game_pages,
+        routes_games,
+        routes_options,
+        routes_recognize,
+        routes_solve,
+        routes_web,
+    )
 
     app.include_router(routes_recognize.router, prefix=API_PREFIX)
     app.include_router(routes_solve.router, prefix=API_PREFIX)
     app.include_router(routes_options.router, prefix=API_PREFIX)
+    app.include_router(routes_games.router, prefix=API_PREFIX)
     app.include_router(routes_web.router)
+    app.include_router(routes_game_pages.router)
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     return app
 

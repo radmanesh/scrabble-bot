@@ -133,3 +133,12 @@ Results:
 In collection mode new pictures become draft labels automatically, and saving a label retrains
 the reader in the background. Not yet done: screenshots tested, other phone shapes, the CNN.
 
+**Games.** The web app is now organised around a game (`/game/<id>`) rather than a one-shot
+review. A `Game` is a `Session` that also keeps its history and is saved as JSON in `data/games/`.
+`wwf.api.gameplay` logs both players' moves (your solver move, the opponent's move typed as a word
+or found as the new tiles since the turn began), with a snapshot per turn for undo, and the page
+shows scores, the unseen tiles (`wwf.core.bag`), a draw prompt, and a sticky Play button on
+phones. `wwf.core.diff` and `wwf.core.entry` hold the pure board-diff and word-to-tiles logic.
+New endpoints: `GET /api/v1/games` and `/api/v1/games/{id}`. Saved games exceed the spec's
+"no persistence" (a JSON file per game, no database).
+

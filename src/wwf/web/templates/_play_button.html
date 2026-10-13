@@ -1,0 +1,6 @@
+{% if result and result.moves %}
+{% set m = result.moves[selected] %}
+<form action="/game/{{ game.id }}/play/{{ selected }}" method="post">
+  <button type="submit" class="primary big">Play {{ m.word }} · {{ m.score.total }} pts</button>
+</form>
+{% endif %}

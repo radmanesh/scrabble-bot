@@ -1,0 +1,44 @@
+<section class="card pending {{ 'ok' if pending.legal else 'warn' }}">
+  {% if game.phase == "opponent_turn" %}<h2>Opponent's move found</h2>
+  {% else %}<h2>New tiles on the board</h2>
+  <p class="small">Tiles appeared since your turn began. If one of them was your move, you can log
+    it so the score and history stay right.</p>
+  {% endif %}
+  <p class="pending-line">
+    <b>{{ pending.word }}</b> {{ "→" if pending.direction == "across" else "↓" }}
+    from row {{ pending.start[0] }}, column {{ pending.start[1] }}
+    ({{ pending.tiles }} new tile{{ "s" if pending.tiles != 1 }})
+    {% if pending.points is not none %}· <b>{{ pending.points }} points</b>{% endif %}
+  </p>
+  {% if pending.words %}
+  <p class="small">
+    {% for w, pts in pending.words %}{{ w }} {{ pts }}{% if not loop.last %} + {% endif %}{% endfor %}
+    {% if pending.bingo %} + bingo {{ pending.bingo }}{% endif %}
+  </p>
+  {% endif %}
+  {% if pending.problems %}
+  <ul class="problems">{% for p in pending.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  {% if not pending.forceable %}
+  <p class="hint small">That doesn't look like one legal move, so a tile is probably misread. Fix
+    the outlined squares on the board below and press <b>Save</b>; this card updates.</p>
+  {% endif %}
+  {% endif %}
+  {% if pending.changed %}
+  <p class="small">{{ pending.changed }} tile{{ "s" if pending.changed != 1 }} already on the board
+    {{ "were" if pending.changed != 1 else "was" }} changed from what you had: check
+    {{ "them" if pending.changed != 1 else "it" }}.</p>
+  {% endif %}
+  <form action="/game/{{ game.id }}/pending" method="post" class="actions">
+    {% if pending.legal or pending.forceable %}
+    {% if pending.forceable %}<input type="hidden" name="force" value="1">{% endif %}
+    {% if game.phase == "opponent_turn" %}
+    <button type="submit" name="action" value="confirm_opponent" class="primary">
+      {{ "Log opponent's move" if pending.legal else "The game accepted it: log it anyway" }}</button>
+    {% else %}
+    <button type="submit" name="action" value="confirm_opponent" class="primary">Log as opponent's move</button>
+    <button type="submit" name="action" value="confirm_me">Log as my move</button>
+    {% endif %}
+    {% endif %}
+    <button type="submit" name="action" value="accept">Just update the board</button>
+  </form>
+</section>

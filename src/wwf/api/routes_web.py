@@ -1,7 +1,6 @@
-"""Server-rendered pages: Upload, Review, Results, Options.
-
-Every form is a plain POST that redirects, so the pages work without JavaScript; app.js adds the
-review grid's keyboard flow and HTMX swaps the results preview in place.
+"""Server-rendered pages: Home, Options and the fixture tools. The game page is in
+routes_game_pages.py. Every form is a plain POST that redirects, so the pages work without
+JavaScript; app.js adds the grid's keyboard flow and HTMX swaps the move preview in place.
 """
 
 from __future__ import annotations
@@ -19,8 +18,8 @@ from starlette.datastructures import FormData
 from wwf.api.app import WEB_DIR, run_blocking
 from wwf.api.app import services as get_services
 from wwf.api.fixtures import FixtureError, FixtureStore, Source
+from wwf.api.games import Game
 from wwf.api.routes_recognize import read_upload
-from wwf.api.routes_solve import solve_session
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK, BoardGrid, check_rack
 from wwf.api.services import DRAFT_NOTE, ApiError, Services
 from wwf.api.session import Session
@@ -53,14 +52,6 @@ def _redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url, status_code=303)
 
 
-def _session_or_page(request: Request, session_id: str) -> Session | HTMLResponse:
-    try:
-        return get_services(request).session(session_id)
-    except ApiError:
-        message = "This session no longer exists. Sessions last 30 minutes."
-        return _render(request, "error.html", 404, title="Session expired", message=message)
-
-
 def _read_options_cookie(request: Request) -> dict[str, Any]:
     raw = request.cookies.get(OPTIONS_COOKIE)
     if not raw:
@@ -81,8 +72,10 @@ def _cookie_session_options(request: Request) -> tuple[str, dict[str, Any], str 
     return sid, params if isinstance(params, dict) else {}, saved.get("dictionary_id")
 
 
-def _new_session(request: Request) -> Session:
-    return get_services(request).new_session(_cookie_session_options(request))
+def _new_game(request: Request, *, ephemeral: bool = False, name: str = "") -> Game:
+    """A new game with the options remembered in the cookie."""
+    svc = get_services(request)
+    return svc.new_game(_cookie_session_options(request), ephemeral=ephemeral, name=name)
 
 
 # --- upload ----------------------------------------------------------------------------------
@@ -91,12 +84,28 @@ def _new_session(request: Request) -> Session:
 @router.get("/", response_class=HTMLResponse)
 def upload_page(request: Request, saved: str | None = None) -> HTMLResponse:
     svc = get_services(request)
-    ctx: dict[str, Any] = {"model_loaded": svc.recognizer is not None}
+    ctx: dict[str, Any] = {
+        "model_loaded": svc.recognizer is not None,
+        "games": [_game_summary(g) for g in svc.games.saved()],
+    }
     if svc.fixtures is not None:
         ctx["fixture_count"] = len(svc.fixtures.list())
         ctx["fixture_dir"] = _display_path(svc.fixtures.directory)
         ctx["saved"] = saved
     return _render(request, "upload.html", **ctx)
+
+
+def _game_summary(g: Game) -> dict[str, Any]:
+    scores = g.scores()
+    return {
+        "id": g.id,
+        "name": g.name,
+        "phase": g.phase,
+        "me": scores["me"],
+        "opponent": scores["opponent"],
+        "turns": len(g.turns),
+        "updated": g.updated_at.replace("T", " ")[:16],
+    }
 
 
 def _source(value: str, content_type: str) -> Source:
@@ -139,12 +148,14 @@ async def upload(
     except ApiError as e:
         return _render(request, "upload.html", e.status, error=_upload_error(e),
                        model_loaded=svc.recognizer is not None)  # fmt: skip
-    s = _new_session(request)
-    await _take_picture(request, svc, s, data, source)
+    # While collecting fixtures a picture is just data, and the page goes back to the camera;
+    # that game is not kept. (Play from it later with "Play from this picture".)
+    game = _new_game(request, ephemeral=svc.fixtures is not None)
+    await _take_picture(request, svc, game, data, source)
     if svc.fixtures is not None:
-        # collecting: go straight back to the camera for the next picture
-        return _redirect(f"/?saved={s.fixture_name}")
-    return _redirect(f"/review/{s.id}")
+        return _redirect(f"/?saved={game.fixture_name}")
+    svc.games.save(game)
+    return _redirect(f"/game/{game.id}")
 
 
 def _upload_error(e: ApiError) -> str:
@@ -155,27 +166,10 @@ def _upload_error(e: ApiError) -> str:
 
 @router.post("/new")
 def new_board(request: Request) -> Response:
-    return _redirect(f"/review/{_new_session(request).id}")
+    return _redirect(f"/game/{_new_game(request).id}")
 
 
-# --- review ----------------------------------------------------------------------------------
-
-
-def _review(request: Request, s: Session, status: int = 200, **ctx: Any) -> HTMLResponse:
-    rec = s.recognition
-    needs_review = rec.needs_review if rec else [[False] * BOARD_SIZE] * BOARD_SIZE
-    rack = list(s.rack) + [""] * (MAX_RACK - len(s.rack))
-    ctx.setdefault("board", s.board)
-    ctx.setdefault("rack", rack)
-    ctx.setdefault("board_image_url", _board_image_url(get_services(request), s))
-    return _render(request, "review.html", status, session=s, recognition=rec,
-                   needs_review=needs_review, **ctx)  # fmt: skip
-
-
-@router.get("/review/{session_id}", response_class=HTMLResponse)
-def review_page(request: Request, session_id: str) -> HTMLResponse:
-    s = _session_or_page(request, session_id)
-    return s if isinstance(s, HTMLResponse) else _review(request, s)
+# --- the board form ----------------------------------------------------------------------
 
 
 def _parse_board_form(form: FormData) -> tuple[BoardGrid, list[str], str, list[str]]:
@@ -201,108 +195,6 @@ def _parse_board_form(form: FormData) -> tuple[BoardGrid, list[str], str, list[s
         rack = ""
         errors.append(f"Rack: {e}.")
     return board, rack_cells, rack, errors
-
-
-@router.post("/review/{session_id}")
-async def review_submit(request: Request, session_id: str) -> Response:
-    s = _session_or_page(request, session_id)
-    if isinstance(s, HTMLResponse):
-        return s
-    svc = get_services(request)
-    form = await request.form()
-    board, rack_cells, rack, errors = _parse_board_form(form)
-    if errors:
-        return _review(request, s, 422, board=board, rack=rack_cells, errors=errors)
-    svc.set_board(s, board, rack)
-    if svc.fixtures is not None and s.fixture_name:
-        # labelling a fixture: every save writes the label file, so nothing typed is lost
-        svc.fixtures.write_label(s.fixture_name, board, rack)
-        svc.schedule_retrain()  # learn from the corrected label
-        if form.get("action") != "solve":
-            return _redirect(f"/fixtures?labelled={s.fixture_name}")
-    if form.get("action") == "save":
-        return _redirect(f"/review/{s.id}?saved=1")
-    if not rack:
-        return _review(request, s, 422, errors=["Enter your rack tiles before solving."])
-    try:
-        await solve_session(request, svc, s)
-    except ApiError as e:
-        return _review(request, s, e.status, errors=[_solve_error(e)])
-    return _redirect(f"/results/{s.id}")
-
-
-def _solve_error(e: ApiError) -> str:
-    if e.error == "solve_timeout":
-        return "The solver took longer than 10 seconds. Try fewer blanks or another solver."
-    return f"Could not solve: {e.error} {e.detail or ''}".strip()
-
-
-@router.post("/review/{session_id}/image")
-async def review_reupload(
-    request: Request, session_id: str, image: UploadFile = File(...), source: str = Form("photo")
-) -> Response:
-    s = _session_or_page(request, session_id)
-    if isinstance(s, HTMLResponse):
-        return s
-    svc = get_services(request)
-    # The next turn: start from the board as it is on the page now (the browser sends the grid
-    # along, so unsaved corrections count), else as last saved.
-    previous = s.board
-    form = await request.form()
-    if "c-0-0" in form:
-        grid, _, _, errors = _parse_board_form(form)
-        if not errors:
-            previous = grid
-    try:
-        data = await read_upload(svc, image)
-        await _take_picture(request, svc, s, data, source, previous)
-    except ApiError as e:
-        return _review(request, s, e.status, errors=[_upload_error(e)])
-    return _redirect(f"/review/{s.id}")
-
-
-# --- results ---------------------------------------------------------------------------------
-
-
-def _selected(n: int, count: int) -> int:
-    return min(max(n, 0), max(count - 1, 0))
-
-
-@router.get("/results/{session_id}", response_class=HTMLResponse)
-def results_page(request: Request, session_id: str, move: int = 0) -> Response:
-    s = _session_or_page(request, session_id)
-    if isinstance(s, HTMLResponse):
-        return s
-    if s.last_result is None:
-        return _redirect(f"/review/{s.id}")
-    svc = get_services(request)
-    result = s.last_result
-    solver_name = svc.solvers.info(result.solver_id).display_name
-    return _render(request, "results.html", session=s, result=result, solver_name=solver_name,
-                   selected=_selected(move, len(result.moves)))  # fmt: skip
-
-
-@router.get("/results/{session_id}/preview/{n}", response_class=HTMLResponse)
-def results_preview(request: Request, session_id: str, n: int) -> Response:
-    s = _session_or_page(request, session_id)
-    if isinstance(s, HTMLResponse):
-        return s
-    if s.last_result is None or not s.last_result.moves:
-        return HTMLResponse("")
-    return _render(request, "_preview.html", session=s, result=s.last_result,
-                   selected=_selected(n, len(s.last_result.moves)))  # fmt: skip
-
-
-@router.post("/results/{session_id}/solve")
-async def results_resolve(request: Request, session_id: str) -> Response:
-    s = _session_or_page(request, session_id)
-    if isinstance(s, HTMLResponse):
-        return s
-    try:
-        await solve_session(request, get_services(request), s)
-    except ApiError as e:
-        return _review(request, s, e.status, errors=[_solve_error(e)])
-    return _redirect(f"/results/{s.id}")
 
 
 # --- options ---------------------------------------------------------------------------------
@@ -464,7 +356,7 @@ def _board_image_url(svc: Services, s: Session) -> str | None:
 
 @router.post("/fixtures/{name}/open")
 def fixture_open(request: Request, name: str) -> Response:
-    """Open a fixture in the review grid, with its existing label if it has one."""
+    """Open a fixture in the game page for labelling, with its label if it has one."""
     svc = get_services(request)
     store = _fixtures(request)
     try:
@@ -472,16 +364,36 @@ def fixture_open(request: Request, name: str) -> Response:
         label = store.label_grid(name)
     except FixtureError as e:
         raise ApiError(404, "fixture_not_found", str(e)) from None
-    s = _new_session(request)
+    game = _new_game(request, ephemeral=True, name=f"Labelling {name}")
     data = fixture.image.read_bytes()
-    result = svc.attach_image(s, data, fixture.content_type)
-    s.fixture_name = name
-    s.fixture_status = fixture.status
+    result = svc.attach_image(game, data, fixture.content_type)
+    game.fixture_name = name
+    game.fixture_status = fixture.status
     if label is not None:
-        s.board, s.rack = label
+        game.board, game.rack = label
+        game.follow_board()
     elif result.geometry is not None:
         # no label yet: keep what the reader saw as a draft, so it isn't lost if not saved now
         rack = "".join(result.rack)
         store.write_draft(name, result.board, rack, result.geometry.quad, DRAFT_NOTE)
-        s.fixture_status = "draft"
-    return _redirect(f"/review/{s.id}")
+        game.fixture_status = "draft"
+    return _redirect(f"/game/{game.id}")
+
+
+@router.post("/fixtures/{name}/play")
+def fixture_play(request: Request, name: str) -> Response:
+    """Start a saved game from a fixture picture and its label (or the reader's guess)."""
+    svc = get_services(request)
+    store = _fixtures(request)
+    try:
+        fixture = store.get(name)
+        label = store.label_grid(name)
+    except FixtureError as e:
+        raise ApiError(404, "fixture_not_found", str(e)) from None
+    game = _new_game(request)
+    svc.attach_image(game, fixture.image.read_bytes(), fixture.content_type)
+    if label is not None:
+        game.board, game.rack = label
+        game.follow_board()
+    svc.games.save(game)
+    return _redirect(f"/game/{game.id}")

@@ -14,7 +14,8 @@ The project is built in milestones (see the build spec).
 | Dictionary loading, caching and choosing between word lists | Done |
 | Solvers: `anchor_trie` ("Smart brute force") and `dummy_random` (demo) | Done (M2) |
 | HTTP API (`wwf.api`) | Done (M5) |
-| Web pages: upload, review, results, options | Done (M6), not yet tried on a real phone |
+| Web pages: home, game (board, moves, opponent, history), options | Done (M6), not yet tried on a real phone |
+| Multi-turn games: play, opponent's move, undo, scores, unseen tiles, saved to disk | Done |
 | Board reader (`wwf.vision`): finds the board in a photo and reads squares and rack | First version, trained on your labelled photos |
 | Docker image | Not built (M7) |
 
@@ -57,50 +58,93 @@ dictionary is built and cached.
 
 Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't survive a restart.
 
-### Using it
+### Playing a game
 
-1. **Upload** (`/`): there are three ways in, in this order.
-   - **Take a photo of the board** is the main one:
-     - On a phone it opens the camera app directly.
-     - On a computer with a webcam it shows a live viewfinder; press **Capture**. Browsers only
-       allow the webcam on `localhost` or `https`; elsewhere the button opens a file picker.
-   - **Or upload a screenshot**: choose an existing image, or drop one onto the box.
-   - **Type a board in by hand**: start from an empty board.
+A game is one page, `/game/<id>`, and it follows the turn loop of a real match:
 
-   The picture is sent as soon as it's taken or chosen, with no extra button. The browser first
-   scales it to at most 2000 px on the long side, which keeps phone photos small and converts
-   iPhone HEIC photos to JPEG. The last three boards you opened are listed as links.
-2. **Review** (`/review/<id>`): the uploaded image is shown next to an editable 15x15 grid. Click
-   or tap a square and type.
-   - Typing a letter fills the square and moves right.
-   - The arrow keys move between squares.
-   - Backspace clears the square and moves left; on an empty square, it moves left and clears that one.
-   - A **lowercase** letter marks a blank tile. On a phone, type the letter then press **Blank**
-     to toggle the last square between tile and blank.
-   - Enter up to 7 rack tiles below the board, using `?` for a blank.
-   - **Save and solve** saves the board and opens the results; **Save** only saves.
-   - **Next turn**: after a move, press **Take next turn** (or **Upload instead**) for a new
-     picture.
-     - Tiles already on the board are kept as they are, including corrections you typed but
-       didn't save, because tiles never leave a WWF board.
-     - Only the empty squares are read from the new picture, which is where the newly played
-       tiles are. The rack is read fresh.
-     - If the new picture confidently shows something different on a kept tile, that square is
-       outlined in amber but keeps your value. Usually it means the earlier board had a mistake.
-     - To start a different game, use **Upload** in the top bar.
-3. **Results** (`/results/<id>`): the ranked moves with score, start square (row, column,
-   counting from 1), direction and leave. Click a move to see the board after playing it, with the
-   new tiles outlined and the score of each word formed. The top shows which solver ran, how long
-   it took, and its parameters and stats.
-4. **Options** (`/options`): choose the solver, its parameters and the word list. Saving applies
-   them to the board you came from (if any) and remembers them in a cookie for new boards.
+```text
+ your turn:      check the board, press Solve, pick a move, press Play
+ opponent's turn: bring the board up to date (picture or typed word), confirm their move
+ your turn again: say which tiles you drew, Solve, ...
+```
 
-Sessions expire after 30 minutes without use.
+**Home (`/`)** lists your saved games, newest first, each with whose turn it is, the score and
+the number of turns; tap one to carry on, or **Delete** it. Below that, start a new game:
+
+- **Take a photo of the board** is the main way:
+  - On a phone it opens the camera app directly.
+  - On a computer with a webcam it shows a live viewfinder; press **Capture**. Browsers only
+    allow the webcam on `localhost` or `https`; elsewhere the button opens a file picker.
+- **Or upload a screenshot**: choose an existing image, or drop one onto the box.
+- **Type a board in by hand**: start from an empty board.
+
+A picture is sent as soon as it's taken or chosen. The browser first scales it to at most 2000 px
+on the long side, which keeps phone photos small and converts iPhone HEIC photos to JPEG.
+
+**The game page** shows, from the top:
+
+1. **The scoreboard**: your points, the opponent's, and how many tiles are left in the bag. A
+   three-step strip shows where the turn is: *Solve*, *Play a move*, *Opponent*. Points count
+   only the turns logged here, so a game you started tracking midway starts from zero.
+2. **What this turn needs**, which changes with the turn:
+   - *What did you draw?* appears on your turn when your rack isn't full. It shows the tiles you
+     kept, and you type the new ones (`?` for a blank). **Add and solve** goes straight on.
+   - *Opponent's turn* (after you play) has two ways to bring the board up to date, below.
+   - *New tiles on the board* appears on your turn if tiles show up that you didn't log.
+3. **The board**: an editable 15x15 grid. Click or tap a square and type.
+   - Typing a letter fills the square and moves right; arrow keys move; Backspace clears.
+   - A **lowercase** letter marks a blank tile. On a phone, type the letter then press **Blank**.
+   - The last move's tiles have a blue edge; amber squares are ones the reader isn't sure of.
+   - Your rack is below the grid, with `?` for a blank.
+   - **Save and solve** saves the board and finds moves. **Save** only saves.
+4. **Best moves**: the ranked list with score, start square (row, column, counting from 1),
+   direction and what you'd keep. Tap one to see the board after it, with each word's points.
+   **Play** (a big button, always in reach at the bottom of a phone) makes that move.
+5. **Update from a picture**, and **Turns**: every logged turn with its words and points, an
+   **Undo last turn** button, the tiles you can't see, and **Delete this game**.
+
+**Playing your move.** **Play** puts the move on the board, takes the tiles off your rack, adds
+the points, and hands the turn to the opponent. It also records where *blanks* went, which a
+picture can never show. Then play the same move on your phone.
+
+**The opponent's move**, either way:
+
+- **Take a picture** (or upload one). Tiles already on the board are kept as they are, including
+  corrections you typed but didn't save, because tiles never leave a WWF board. Only the empty
+  squares are read, which is where their new tiles are. A card then says *Opponent's move found*:
+  the word, where it starts, and its score. Press **Log opponent's move**. If the new tiles
+  don't form one legal move (a tile was probably misread), the card says why and the squares to
+  check are outlined; correct them in the grid, press **Save**, and the card updates.
+- **Type their word**: the word, and the row and column of its first letter (clicking a square
+  on the board fills those in), and across or down. Write the whole word, including letters
+  already on the board; lowercase marks a blank. It's checked against the rules and the word
+  list first, and nothing is logged if a letter doesn't match or the word doesn't touch the
+  board. If only the word list disagrees, you're offered **log it even so**, because the game
+  itself accepted it. Such turns are marked *not in list*.
+- **They passed** logs a pass.
+
+**Mistakes.** **Undo last turn** puts back the board, your rack, the turn and the score exactly
+as they were before it, including after a typed or photographed opponent move. It can be pressed
+repeatedly.
+
+**Unseen tiles.** The list under *Turns* is everything not on the board or your rack: the
+opponent's rack plus the bag. If the board shows more of a letter than the game has, the page
+says so, because one of them is a blank that looks like a normal tile; type it in lowercase and
+the count comes right.
+
+**Saving.** Every game is a file in `data/games/` (one JSON file, plus its latest picture), so it
+survives restarting the server and a game can last weeks. Move the folder, or set
+`WWF_GAMES_DIR`, to keep games elsewhere. The earlier Review and Results addresses
+(`/review/<id>`, `/results/<id>`) now go to the game page.
+
+**Options (`/options`)**: choose the solver, its parameters and the word list. Saving applies
+them to the game you came from (if any) and remembers them in a cookie for new games.
 
 Everything works without JavaScript except:
-- the review grid's keyboard shortcuts and the Blank button
+- the grid's keyboard shortcuts and the Blank button
+- clicking a square to fill in the typed word's start
 - the webcam viewfinder, sending as soon as a picture is chosen, and downscaling
-- the recent-boards list
+- the big Play button staying in reach on a phone, and the delete confirmation
 
 Without JavaScript, pick the picture and press the button that appears under it.
 
@@ -244,6 +288,8 @@ runs; the raw schema is at `/openapi.json`. All endpoints live under `/api/v1`.
 | `GET /solvers` | none | Every solver with its parameter schema |
 | `GET /dictionaries` | none | Every word list |
 | `POST /validate` | `{board, rack, move, dictionary_id?}` | Named violations, plus the score if legal |
+| `GET /games` | none | Saved games, newest first, with whose turn and the score |
+| `GET /games/{id}` | none | One game: board, rack, scores, unseen tiles, and every logged turn |
 | `GET /health` | none | Status, default dictionary and word count, whether a vision model is loaded |
 
 Formats:
@@ -617,6 +663,7 @@ This file is described under [Dictionaries](#dictionaries).
 | --- | --- |
 | `WWF_ROOT` | Directory that holds `config/` and `assets/`. Defaults to the repo root. |
 | `WWF_DICTIONARY` | Default dictionary id |
+| `WWF_GAMES_DIR` | Where saved games live (default `data/games`) |
 | `WWF_BOARD_CONFIG` | Board config file in `config/` to use, e.g. `wwf_classic.json` |
 
 ## Adding a solver
@@ -685,13 +732,15 @@ config/                   board layout, solver registry, dictionary list
 assets/dictionaries/      word lists (.txt)
 src/wwf/core/             board.py, rack.py, move.py, scoring.py, dictionary.py, config.py
 src/wwf/solvers/          base.py, registry.py, anchor_trie.py, dummy_random.py
-src/wwf/api/              app.py (factory, wwf-serve), services.py, session.py, schemas.py, routes_*.py
+src/wwf/api/              app.py (factory, wwf-serve), services.py, session.py, schemas.py,
+                          games.py (saved games), gameplay.py (turns, undo), routes_*.py
 src/wwf/web/              templates/ (Jinja2 pages), static/ (board.css, app.js, vendored htmx)
 src/wwf/vision/           board.py (find the board), reader.py (squares, letters, rack), pipeline.py,
                           train.py (build/evaluate the reader), synth.py (font letters), perspective.py
 tests/                    core/, solvers/, vision/, api/
 docs/usage.md             this file
 .cache/                   dictionary caches (generated, git-ignored)
+data/games/               saved games (generated, git-ignored)
 ```
 
 ## Troubleshooting
@@ -701,7 +750,8 @@ docs/usage.md             this file
 | `address already in use` from `wwf-serve` | Another server is on that port. Use `--port 8080`, or stop the other one. |
 | Phone can't open the app | Start with `--host 0.0.0.0`, use the computer's LAN IP, keep both on the same Wi-Fi, and allow Python through the macOS firewall if asked. |
 | Fixtures page says "fixture_mode_off" | Start the server with `--collect-fixtures`. |
-| "Session expired" | Sessions last 30 minutes after last use, and are lost when the server restarts. Start a new board. |
+| "Session expired" | Only the JSON API's sessions and fixture-labelling pages expire (30 minutes). Games are saved. |
+| "Game not found" | It was deleted, or the server is using a different `WWF_GAMES_DIR`. |
 | First solve takes several seconds | The dictionary is being built and cached. Later runs are fast. |
 | `RegistryError: solvers.json enables unknown solver id` | An enabled entry in `config/solvers.json` has no class in `src/wwf/solvers/`. Fix the id or set `"enabled": false`. |
 | `DictionaryError: default dictionary 'x' is not available` | `WWF_DICTIONARY` or the `"default"` in `config/dictionaries.json` names a list that doesn't exist. |

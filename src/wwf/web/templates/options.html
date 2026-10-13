@@ -4,7 +4,7 @@
 {% block content %}
 <h1>Options</h1>
 {% if saved %}<p class="notice ok">Saved{% if session %} for this board{% endif %}.
-  {% if session %}<a href="/review/{{ session.id }}">Back to the board</a>{% endif %}</p>{% endif %}
+  {% if session %}<a href="/game/{{ session.id }}">Back to the game</a>{% endif %}</p>{% endif %}
 
 <form id="options-form" action="/options" method="post">
   <input type="hidden" name="session_id" value="{{ session.id if session else '' }}">

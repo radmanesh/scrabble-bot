@@ -1,0 +1,42 @@
+<section class="card history">
+  <h2>Turns</h2>
+  {% if turns %}
+  <ol class="turn-log">
+    {% for t in turns %}
+    <li class="{{ t.player }}">
+      <span class="who">{{ "You" if t.player == "me" else "Opponent" }}</span>
+      {% if t.kind == "pass" %}
+      <span>passed</span>
+      {% else %}
+      <b>{{ t.word }}</b> {{ "→" if t.direction == "across" else "↓" }}
+      <span class="pts">{{ t.points }}</span>
+      <span class="small hint">
+        {% for w in t.words %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}{% if t.bingo %} + bingo {{ t.bingo }}{% endif %}
+      </span>
+      {% if t.forced %}<span class="badge" title="Not in the word list, but the game accepted it">not in list</span>{% endif %}
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <form action="/game/{{ game.id }}/undo" method="post" class="actions">
+    <button type="submit">Undo last turn</button>
+  </form>
+  {% else %}
+  <p class="hint">Moves you play and the opponent's moves are listed here with their scores.</p>
+  {% endif %}
+
+  {% if bag %}
+  <details class="unseen">
+    <summary>Unseen tiles: {{ bag.unseen_total }} ({{ bag.in_bag }} in the bag, plus their rack)</summary>
+    <p class="chips">
+      {% for letter, n in bag.unseen.items() %}<span class="chip">{{ letter }}{% if n > 1 %}<sup>×{{ n }}</sup>{% endif %}</span>{% endfor %}
+    </p>
+    <p class="hint small">Everything not on the board or your rack. A blank that was played
+      looks like a normal tile in a picture, so mark it lowercase to keep this count right.</p>
+  </details>
+  {% endif %}
+
+  <form action="/game/{{ game.id }}/delete" method="post" class="danger-zone" data-confirm="Delete this game and its history?">
+    <button type="submit" class="link">Delete this game</button>
+  </form>
+</section>

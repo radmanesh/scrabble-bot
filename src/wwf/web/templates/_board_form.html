@@ -1,0 +1,99 @@
+<form id="board-form" class="card board-card" action="/game/{{ game.id }}/board" method="post" autocomplete="off">
+  <h2>Board</h2>
+  {% if saved %}<p class="notice ok">Saved.</p>{% endif %}
+  <p class="hint small">Type letters into the squares. <span class="kbd">lowercase</span> marks a blank
+    tile (or use <b>Blank</b>). Arrow keys move; Backspace clears.
+    {% if recent %}The last move's tiles have a blue edge.{% endif %}</p>
+
+  {% set unsure = needs_review | map('select') | map('list') | map('length') | sum %}
+  {% if recognition and recognition.kept_from_previous %}
+  <p class="notice {{ 'ok' if unsure == 0 else '' }}">Kept the {{ recognition.kept_from_previous }}
+    tiles already on the board{% if recognition.geometry %} and read {{ recognition.new_tiles }}
+    new one{{ 's' if recognition.new_tiles != 1 }}{% endif %}.
+    {% if recognition.conflicts %}<b>{{ recognition.conflicts }}</b> kept
+    tile{{ 's' if recognition.conflicts != 1 }} looked different in the new picture (amber):
+    check {{ 'them' if recognition.conflicts != 1 else 'it' }}.{% endif %}
+    {% if not recognition.geometry %}Couldn't find the board in the new picture, so nothing new
+    was read: type the new tiles in, or take the picture again.{% endif %}
+    {% if unsure and not recognition.conflicts %}<b>{{ unsure }}</b> square{{ 's' if unsure != 1 }}
+    to check (amber).{% endif %}</p>
+  {% elif recognition and recognition.geometry %}
+  <p class="notice {{ 'ok' if unsure == 0 else '' }}">Board read from the picture.
+    {% if unsure %}<b>{{ unsure }}</b> square{{ 's' if unsure != 1 }} the reader is unsure of
+    {{ 'is' if unsure == 1 else 'are' }} outlined in amber.{% else %}It is confident about every
+    square, but give it a glance.{% endif %}</p>
+  {% elif recognition and "recognition_unavailable" in recognition.warnings %}
+  <p class="hint small">The board reader isn't available, so type the board in using the grid.</p>
+  {% elif recognition and "board_not_found" in recognition.warnings %}
+  <p class="notice">Couldn't find the board in the picture. Type it in, or retake the photo with the
+    whole screen in view.</p>
+  {% endif %}
+  {% if suspects %}
+  <p class="notice">The bag holds fewer of some letters than the board shows: {{ suspects }}. One
+    of those tiles is probably a blank. Type it in lowercase.</p>
+  {% endif %}
+
+  {% if game.image %}
+  <details class="shot-details small">
+    <summary>The picture{% if board_image_url %} (straightened){% endif %}</summary>
+    {% if board_image_url %}
+    <img class="board-shot" src="{{ board_image_url }}" alt="The board from the picture, straightened">
+    {% endif %}
+    <div class="shot-frame">
+      <img src="/api/v1/session/{{ game.id }}/image" alt="The picture of the board">
+      {% if recognition and recognition.geometry %}
+      {% set g = recognition.geometry %}
+      <svg class="overlay" viewBox="0 0 {{ g.image_width }} {{ g.image_height }}" preserveAspectRatio="none" aria-hidden="true">
+        {% for row in g.cells %}{% for b in row %}<rect x="{{ b[0] }}" y="{{ b[1] }}" width="{{ b[2] }}" height="{{ b[3] }}"/>{% endfor %}{% endfor %}
+        {% for b in g.rack %}<rect class="rack-box" x="{{ b[0] }}" y="{{ b[1] }}" width="{{ b[2] }}" height="{{ b[3] }}"/>{% endfor %}
+      </svg>
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
+
+  <div class="board" role="grid" aria-label="Board">
+    {% for r in range(size) %}
+    <div class="board-row" role="row">
+      {% for c in range(size) %}
+      {% set v = board[r][c] or "" %}
+      <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in pending_positions %} pending{% endif %}{% if v and v.islower() %} blank{% endif %}"
+             name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"
+             data-r="{{ r }}" data-c="{{ c }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
+             autocapitalize="characters" spellcheck="false" inputmode="text"
+             aria-label="Row {{ r + 1 }} column {{ c + 1 }}{% if bonus_label[r][c] %}, {{ bonus_label[r][c] }}{% endif %}">
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="rack-row">
+    <span class="rack-label">Rack</span>
+    {% for t in rack %}
+    <input class="cell rack-cell{% if t == '?' %} blank{% endif %}" name="r-{{ loop.index0 }}" value="{{ t }}"
+           maxlength="1" placeholder=" " autocapitalize="characters" spellcheck="false" aria-label="Rack tile {{ loop.index }}">
+    {% endfor %}
+  </div>
+  <p class="hint small">Use <span class="kbd">?</span> for a blank on your rack.</p>
+
+  {% if labelling %}
+  <div class="fixture-label">
+    <p class="small">Labelling fixture <code>{{ game.fixture_name }}</code>. Enter exactly what
+      the picture shows, including the rack.
+      {% if game.fixture_status == "draft" %}<br><b>This board was filled in automatically:</b>
+      check it against the picture, especially the amber squares, before saving.{% endif %}</p>
+  </div>
+  {% endif %}
+  <div class="actions">
+    <button type="button" id="blank-toggle" class="js-only" hidden>Blank</button>
+    {% if labelling %}
+    <button type="submit" name="action" value="fixture" class="primary">Save label</button>
+    <button type="submit" name="action" value="solve">Save label and solve</button>
+    {% elif game.phase == "my_turn" %}
+    <button type="submit" name="action" value="save">Save</button>
+    <button type="submit" name="action" value="solve" class="primary">Save and solve</button>
+    {% else %}
+    <button type="submit" name="action" value="save" class="primary">Save</button>
+    {% endif %}
+  </div>
+</form>

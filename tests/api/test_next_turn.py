@@ -80,10 +80,10 @@ def _first_turn(client: TestClient, reader: FakeReader) -> str:
 
 
 def _next_turn(client: TestClient, sid: str, extra: dict[str, str] | None = None) -> str:
-    r = client.post(f"/review/{sid}/image", files={"image": ("b.png", _png(), "image/png")},
+    r = client.post(f"/game/{sid}/image", files={"image": ("b.png", _png(), "image/png")},
                     data=extra or {}, follow_redirects=False)  # fmt: skip
     assert r.status_code == 303
-    return client.get(f"/review/{sid}").text
+    return client.get(f"/game/{sid}").text
 
 
 def test_first_picture_is_read_as_is(client: TestClient, reader: FakeReader) -> None:
@@ -105,7 +105,7 @@ def test_next_turn_keeps_tiles_and_reads_new_ones(client: TestClient, reader: Fa
     rec = state["recognition"]
     assert (rec["kept_from_previous"], rec["new_tiles"], rec["conflicts"]) == (5, 2, 1)
     assert rec["needs_review"][7][9] is True  # the disagreement is flagged for a look
-    assert "Next turn: kept the" in html and "looked different in the new picture" in html
+    assert "Kept the 5" in html and "looked different in the new picture" in html
 
 
 def test_unsaved_grid_edits_are_the_starting_point(client: TestClient, reader: FakeReader) -> None:

@@ -1,7 +1,30 @@
 {% extends "base.html" %}
 {% block body_class %}page-upload{% endblock %}
 {% block content %}
-<h1>Solve a board</h1>
+{% if games %}
+<h1>Your games</h1>
+<section class="card games-card">
+  <ul class="games">
+    {% for g in games %}
+    <li class="game-row">
+      <a class="game-link" href="/game/{{ g.id }}">
+        <span class="game-name">{{ g.name }}</span>
+        <span class="game-meta">
+          {{ "Your turn" if g.phase == "my_turn" else "Opponent's turn" }}
+          · {{ g.me }}–{{ g.opponent }} · {{ g.turns }} turn{{ "s" if g.turns != 1 }} · {{ g.updated }}
+        </span>
+      </a>
+      <form action="/game/{{ g.id }}/delete" method="post" data-confirm="Delete this game and its history?">
+        <button type="submit" class="link" aria-label="Delete {{ g.name }}">Delete</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+<h2>Start a new game</h2>
+{% else %}
+<h1>Start a game</h1>
+{% endif %}
 
 {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
 {% if fixtures_mode %}
@@ -51,8 +74,5 @@
   type the board in on the next page.</p>
 {% endif %}
 
-<section id="recent" class="card" hidden>
-  <h2>Recent boards</h2>
-  <ul id="recent-list"></ul>
-</section>
+
 {% endblock %}

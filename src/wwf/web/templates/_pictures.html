@@ -1,0 +1,24 @@
+<div class="retake">
+  <div class="retake-text">
+    <h2>{{ "Take a picture" if game.phase == "opponent_turn" else "Update from a picture" }}</h2>
+    <p class="small">Tiles already on this board are kept as they are; only new tiles and your
+      rack are read from the picture.</p>
+  </div>
+  <form id="camera-form" class="image-form" action="/game/{{ game.id }}/image" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="source" value="photo">
+    <label class="button primary" id="camera-button"><span aria-hidden="true">📷</span> Take a picture
+      <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
+    </label>
+    <noscript><button type="submit">Read picture</button></noscript>
+  </form>
+  <form class="image-form" action="/game/{{ game.id }}/image" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="source" value="auto">
+    <label class="button">Upload instead
+      <input type="file" name="image" accept="image/*" class="file-hidden" required>
+    </label>
+    <noscript><button type="submit">Upload</button></noscript>
+  </form>
+  {% with stay=False %}{% include "_viewfinder.html" %}{% endwith %}
+  <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
+</div>
+<div class="notice error" id="send-error" role="alert" hidden></div>

@@ -3,12 +3,8 @@
 (function () {
   "use strict";
   document.documentElement.classList.remove("no-js");
-  const RECENT_KEY = "wwf.recentSessions";
   const OPTIONS_KEY = "wwf.options";
 
-  function readJSON(key, fallback) {
-    try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
-  }
   function writeJSON(key, value) {
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage blocked */ }
   }
@@ -51,7 +47,7 @@
       // Next turn on the review page: send the board as it is now, unsaved edits included, so
       // the server keeps those tiles and only reads the new ones from the picture.
       const boardForm = document.getElementById("board-form");
-      if (boardForm && action.includes("/review/")) {
+      if (boardForm && action.includes("/game/")) {
         new FormData(boardForm).forEach((v, k) => { if (k.startsWith("c-")) body.append(k, v); });
       }
       const res = await fetch(action, { method: "POST", body: body });
@@ -100,19 +96,6 @@
     zone.addEventListener("drop", (e) => {
       if (e.dataTransfer.files.length) sendImage(fileForm.action, e.dataTransfer.files[0], "auto");
     });
-    const recent = readJSON(RECENT_KEY, []);
-    if (recent.length) {
-      const list = document.getElementById("recent-list");
-      recent.forEach((r) => {
-        const li = document.createElement("li");
-        const a = document.createElement("a");
-        a.href = "/review/" + r.id;
-        a.textContent = new Date(r.at).toLocaleString();
-        li.appendChild(a);
-        list.appendChild(li);
-      });
-      document.getElementById("recent").hidden = false;
-    }
   }
 
   // On a computer, the capture attribute does nothing, so show a live webcam viewfinder instead.
@@ -190,19 +173,13 @@
     });
   }
 
-  function rememberSession(id) {
-    const recent = readJSON(RECENT_KEY, []).filter((r) => r.id !== id);
-    recent.unshift({ id: id, at: Date.now() });
-    writeJSON(RECENT_KEY, recent.slice(0, 3));
-  }
-
-  // --- review page ---------------------------------------------------------------------------
+  // --- game page: the editable grid ----------------------------------------------------------
   function initReview() {
-    const layout = document.querySelector(".review-layout");
+    const layout = document.querySelector(".game");
     if (!layout) return;
-    rememberSession(layout.dataset.session);
 
-    const board = document.querySelector(".board");
+    const board = document.querySelector("#board-form .board");
+    if (!board) return;
     const cells = Array.from(board.querySelectorAll("input.cell"));
     const size = 15;
     const at = (r, c) => cells[r * size + c];
@@ -220,8 +197,17 @@
       if (next) { next.focus(); next.select(); }
     }
 
+    // Clicking a square fills in where the opponent's typed word starts.
+    const oppRow = document.querySelector(".opp-type input[name=row]");
+    const oppCol = document.querySelector(".opp-type input[name=col]");
+    function pointOpponentAt(input) {
+      if (oppRow && oppCol) { oppRow.value = +input.dataset.r + 1; oppCol.value = +input.dataset.c + 1; }
+    }
+
     cells.forEach((input) => {
-      input.addEventListener("focus", () => { lastFocused = input; input.select(); });
+      input.addEventListener("focus", () => {
+        lastFocused = input; input.select(); pointOpponentAt(input);
+      });
       input.addEventListener("keydown", (e) => {
         const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
         if (arrows[e.key]) {
@@ -327,7 +313,17 @@
     });
   }
 
+  // Forms that destroy something ask first (data-confirm="question").
+  function initConfirms() {
+    document.querySelectorAll("form[data-confirm]").forEach((form) => {
+      form.addEventListener("submit", (e) => {
+        if (!window.confirm(form.dataset.confirm)) e.preventDefault();
+      });
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
+    initConfirms();
     initImageForms();
     initViewfinder();
     initUpload();

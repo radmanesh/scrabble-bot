@@ -17,6 +17,7 @@ from typing import Any
 from PIL import Image, UnidentifiedImageError
 
 from wwf.api.fixtures import FixtureStore
+from wwf.api.games import Game, GameStore
 from wwf.api.schemas import (
     BOARD_SIZE,
     BoardGrid,
@@ -74,6 +75,7 @@ class Settings:
     worker_threads: int = 4
     fixtures_dir: Path | None = None  # set: fixture collection mode (wwf-serve --collect-fixtures)
     model_path: Path | None = None  # board reader; None disables reading pictures and retraining
+    games_dir: Path | None = None  # where saved games live; None keeps games in memory only
 
 
 def unavailable_recognition(warning: str = "recognition_unavailable") -> RecognitionResultOut:
@@ -95,11 +97,15 @@ class Services:
         sessions: SessionStore,
         settings: Settings,
         recognizer: Recognizer | None = None,
+        games: GameStore | None = None,
     ) -> None:
         self.cfg = cfg
         self.solvers = solvers
         self.dictionaries = dictionaries
         self.sessions = sessions
+        self.games = (
+            games if games is not None else GameStore(settings.games_dir, settings.session_ttl_s)
+        )
         self.settings = settings
         self.recognizer = recognizer
         self.fixtures = FixtureStore(settings.fixtures_dir) if settings.fixtures_dir else None
@@ -141,21 +147,45 @@ class Services:
 
     # --- sessions ---------------------------------------------------------------------------
 
-    def new_session(self, options: tuple[str, dict[str, Any], str | None] | None = None) -> Session:
+    def _resolve_options(
+        self, options: tuple[str, dict[str, Any], str | None] | None
+    ) -> tuple[str, dict[str, Any], str]:
         if options is not None:
             try:
-                sid, params, did = self.check_options(*options)
+                return self.check_options(*options)
             except ApiError:
-                sid, params, did = self.default_options()
-        else:
-            sid, params, did = self.default_options()
+                pass  # a stale cookie must not break starting a game
+        return self.default_options()
+
+    def new_session(self, options: tuple[str, dict[str, Any], str | None] | None = None) -> Session:
+        sid, params, did = self._resolve_options(options)
         return self.sessions.create(sid, params, did)
 
+    def new_game(
+        self,
+        options: tuple[str, dict[str, Any], str | None] | None = None,
+        *,
+        ephemeral: bool = False,
+        name: str = "",
+    ) -> Game:
+        sid, params, did = self._resolve_options(options)
+        return self.games.create(sid, params, did, name=name, ephemeral=ephemeral)
+
     def session(self, session_id: str) -> Session:
+        """A saved game or a session: both carry a board, a rack and options."""
+        game = self.games.find(session_id)
+        if game is not None:
+            return game
         try:
             return self.sessions.get(session_id)
         except KeyError:
             raise ApiError(404, "session_not_found", {"session_id": session_id}) from None
+
+    def game(self, game_id: str) -> Game:
+        game = self.games.find(game_id)
+        if game is None:
+            raise ApiError(404, "game_not_found", {"game_id": game_id})
+        return game
 
     def state(self, s: Session, request_id: str = "") -> SessionState:
         return SessionState(
@@ -170,7 +200,7 @@ class Services:
             params=s.params,
             dictionary_id=s.dictionary_id,
             has_result=s.last_result is not None,
-            expires_in_s=self.sessions.expires_in(s),
+            expires_in_s=-1 if isinstance(s, Game) else self.sessions.expires_in(s),
         )
 
     def set_board(self, s: Session, board: BoardGrid, rack: str) -> None:
@@ -178,6 +208,8 @@ class Services:
         s.rack = rack
         s.corrected = True
         s.last_result = None
+        if isinstance(s, Game):
+            s.follow_board()
 
     def set_options(
         self, s: Session, solver_id: str, params: dict[str, Any], did: str | None
@@ -226,6 +258,8 @@ class Services:
         s.rack = "".join(result.rack)
         s.corrected = False
         s.last_result = None
+        if isinstance(s, Game):
+            s.follow_board()
         return result
 
     # --- solving ----------------------------------------------------------------------------

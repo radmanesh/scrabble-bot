@@ -78,7 +78,7 @@ def test_label_round_trip(client: TestClient, fixtures_dir: Path) -> None:
     for i, ch in enumerate("HELlO"):
         form[f"c-7-{5 + i}"] = ch
     form |= {f"r-{i}": ch for i, ch in enumerate("AB?")} | {"action": "fixture"}
-    r = client.post(review, data=form, follow_redirects=False)
+    r = client.post(f"{review}/board", data=form, follow_redirects=False)
     assert r.headers["location"] == f"/fixtures?labelled={name}"
 
     label = json.loads((fixtures_dir / f"{name}.json").read_text())
@@ -98,7 +98,7 @@ def test_label_round_trip(client: TestClient, fixtures_dir: Path) -> None:
 
 
 def test_fixture_mode_off_by_default() -> None:
-    with TestClient(create_app()) as c:
+    with TestClient(create_app(Settings())) as c:
         assert c.get("/fixtures").status_code == 404
         assert "Collecting fixtures" not in c.get("/").text
 
@@ -137,7 +137,7 @@ def test_draft_is_shown_then_verified_keeping_extra_fields(
     assert "filled in automatically" in html
     assert 'value="H"' in html  # the draft pre-fills the grid
 
-    client.post(review, data=_form({7: (5, "HELLS")}, "AB", "fixture"))
+    client.post(f"{review}/board", data=_form({7: (5, "HELLS")}, "AB", "fixture"))
     label = json.loads((fixtures_dir / f"{name}.json").read_text())
     assert label["status"] == "verified"
     assert label["board"][7] == ".....HELLS....."
@@ -149,9 +149,11 @@ def test_save_and_solve_also_writes_the_label(client: TestClient, fixtures_dir: 
     name = _upload(client, _image("JPEG"), "photo")
     review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
     r = client.post(
-        review, data=_form({7: (5, "HELLO")}, "SATIRE", "solve"), follow_redirects=False
+        f"{review}/board",
+        data=_form({7: (5, "HELLO")}, "SATIRE", "solve"),
+        follow_redirects=False,
     )
-    assert r.headers["location"].startswith("/results/")
+    assert r.headers["location"].startswith("/game/")
     label = json.loads((fixtures_dir / f"{name}.json").read_text())
     assert label["board"][7] == ".....HELLO....." and label["rack"] == "SATIRE"
 
@@ -214,7 +216,7 @@ def test_saving_a_label_retrains_the_reader(tmp_path: Path) -> None:
         form = _form({4: (4, "QUIZ"), 7: (7, "RAVEN"), 9: (3, "JOLTS")}, "AB", "fixture")
         for r, ch in ((5, "E"), (6, "B"), (8, "A")):
             form[f"c-{r}-7"] = ch
-        client.post(review, data=form)
+        client.post(f"{review}/board", data=form)
         assert json.loads((fixtures_dir / f"{name}.json").read_text())["status"] == "verified"
         svc = client.app.state.services  # type: ignore[attr-defined]
         deadline = time.time() + 60
