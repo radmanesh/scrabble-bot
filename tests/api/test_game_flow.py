@@ -264,6 +264,22 @@ def test_picture_turn_labels_the_picture_when_confirmed(
     assert f"/game/{gid}/picture/{pic.id}" in client.get(f"/game/{gid}").text
 
 
+def test_only_the_latest_picture_of_a_turn_is_labelled(
+    client: TestClient, services: Services, reader: FakeReader, retrains: list[int]
+) -> None:
+    """An earlier picture of the turn may predate tiles the confirmed board has."""
+    gid = started_game(client, phase="start_opponent")
+    reader.next = reading({7: (5, "HELLO")}, "XYZ")
+    send_picture(client, gid)
+    reader.next = reading({7: (5, "HELLO"), 8: (5, "A"), 9: (5, "T")}, "XYZ")
+    send_picture(client, gid)
+    client.post(f"/game/{gid}/board", data=_current_form(services, gid, "confirm_opponent"))
+    first, second = services.game(gid).pictures
+    assert first.label_board is None
+    assert second.label_board is not None and second.label_board[9][5] == "T"
+    assert services.game(gid).turns[-1].picture == second.id
+
+
 def test_typed_turns_do_not_label_pictures(
     client: TestClient, services: Services, reader: FakeReader, retrains: list[int]
 ) -> None:

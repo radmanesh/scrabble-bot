@@ -233,15 +233,20 @@ def cancel_turn(game: Game) -> None:
 
 
 def _lock(game: Game, turn: Turn) -> Turn:
-    """Close the open turn: it joins the history, and its pictures get the confirmed board as
-    their label when it came from a picture."""
+    """Close the open turn: it joins the history, and the picture it was read from gets the
+    confirmed board as its label.
+
+    Only the latest picture is labelled. The confirmed board is what the user checked against that
+    one; an earlier picture of the same turn may well show the board before some of those tiles
+    were played, and labelling it with tiles it doesn't show teaches the reader that empty squares
+    are tiles."""
     open_pics = game.open_pictures()
     if game.open_source == "picture" and open_pics:
-        turn.picture = open_pics[-1].id
-        for pic in open_pics:
-            pic.label_board = grid_to_rows(game.board)
-            pic.label_rack = game.rack
-            pic.label_turn = turn.n
+        pic = open_pics[-1]
+        turn.picture = pic.id
+        pic.label_board = grid_to_rows(game.board)
+        pic.label_rack = game.rack
+        pic.label_turn = turn.n
     game.turns.append(turn)
     game.base_board = [row[:] for row in game.board]
     game.base_rack = game.rack
