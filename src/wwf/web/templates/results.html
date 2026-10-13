@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Moves · WWF Solver{% endblock %}
+{% block body_class %}page-results{% endblock %}
+{% block content %}
+<section class="card run-info">
+  <h1>Best moves</h1>
+  <p>
+    <b>{{ solver_name }}</b>
+    · {{ result.elapsed_ms }} ms
+    · dictionary <b>{{ result.dictionary_id }}</b>
+    · rack <span class="kbd">{{ session.rack or "—" }}</span>
+  </p>
+  <details>
+    <summary>Parameters and stats</summary>
+    <dl class="kv">
+      {% for k, v in result.params.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}
+      {% for k, v in result.stats.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}
+    </dl>
+  </details>
+  <div class="actions">
+    <a class="button" href="/review/{{ session.id }}">Back to board</a>
+    <a class="button" href="/options?session={{ session.id }}">Options</a>
+    <form action="/results/{{ session.id }}/solve" method="post"><button type="submit">Solve again</button></form>
+  </div>
+</section>
+
+{% if not result.moves %}
+<p class="notice">No legal moves found with this rack.</p>
+{% else %}
+<div class="results-layout">
+  <div class="card table-wrap">
+    <table class="moves">
+      <thead><tr><th>#</th><th>Word</th><th>Score</th><th>Start</th><th>Dir</th><th>Leave</th></tr></thead>
+      <tbody>
+      {% for m in result.moves %}
+      <tr class="{% if loop.index0 == selected %}selected{% endif %}">
+        <td>{{ loop.index }}</td>
+        <td><a href="?move={{ loop.index0 }}" hx-get="/results/{{ session.id }}/preview/{{ loop.index0 }}"
+               hx-target="#preview" hx-swap="innerHTML">{{ m.word }}</a></td>
+        <td class="num">{{ m.score.total }}</td>
+        <td>{{ m.start[0] + 1 }},{{ m.start[1] + 1 }}</td>
+        <td>{{ "→" if m.direction == "across" else "↓" }}</td>
+        <td class="mono">{{ m.leave or "—" }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div id="preview" class="card">
+    {% include "_preview.html" %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

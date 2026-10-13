@@ -7,6 +7,15 @@ returns the highest-scoring legal moves. Built milestone by milestone from the b
 scoring and validation, solvers and their parameters, choosing a dictionary, configuration, tests,
 and extending the code.
 
+## Running
+
+```sh
+uv sync
+uv run wwf-serve              # http://127.0.0.1:8000 ; add --host 0.0.0.0 to use it from a phone
+```
+
+API docs are at `/docs` while it runs.
+
 ## Development
 
 ```sh
@@ -67,3 +76,26 @@ Drop a module in `src/wwf/solvers/` with a class that has `id`, `display_name`, 
 `params` (a tuple of `SolverParam`) and `solve(board, rack, dictionary, cfg, **params)`, then add
 `{"id": "<your id>", "enabled": true}` to `config/solvers.json`. Call `resolve_params` at the top
 of `solve` and score with `wwf.core.scoring`; do not reimplement scoring.
+
+**M5 and M6, API and web pages (built ahead of M3-4 at the owner's request).** `wwf.api` is a
+FastAPI app (`create_app`, started by `wwf-serve`) with in-memory sessions (30-minute sliding TTL,
+swept every minute), all spec routes, and a few additions:
+- `POST /session`, which starts an empty session for typing a board in
+- `GET /session/{id}/image`
+- `GET /dictionaries`, plus a `dictionary_id` alongside `solver_id` in options and solve calls
+- the score in the `/validate` response when a move is legal
+
+Recognition and solving run in a thread pool. Solves time out after 10 s with a 504 and
+`partial: true`; solvers can't be interrupted, so no moves come back. Request ids are on every
+response, in the `X-Request-ID` header and in the log. `GET /solvers` returns
+`{request_id, default_id, solvers: [...]}` rather than a bare array, so it can carry the request id.
+
+`wwf.web` holds the Jinja2 templates, CSS, `app.js` (about 200 lines) and vendored HTMX. Every
+form is a plain POST, so the pages work without JavaScript; options persist in a cookie and are
+mirrored to `localStorage`. Until vision exists, uploads are stored and shown, but recognition
+returns an empty board with the warning `recognition_unavailable`.
+
+Verification: tests in `tests/api` cover the API and drive the pages as a no-JS browser. The
+review grid's keyboard flow was checked by driving headless Chrome, and the layouts were checked
+by screenshot at 390 px and 1280 px. Not yet verified on a real phone or against a Docker build.
+

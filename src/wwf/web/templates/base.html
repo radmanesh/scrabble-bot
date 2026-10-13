@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}WWF Solver{% endblock %}</title>
+  <link rel="stylesheet" href="/static/board.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <header class="topbar">
+    <a class="brand" href="/">WWF Solver</a>
+    <nav>
+      <a href="/">Upload</a>
+      <a href="/options{% if session %}?session={{ session.id }}{% endif %}">Options</a>
+    </nav>
+  </header>
+  <main>
+    {% if errors %}
+    <div class="notice error" role="alert">
+      <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

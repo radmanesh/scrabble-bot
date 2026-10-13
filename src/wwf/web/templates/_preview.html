@@ -1,0 +1,20 @@
+{% set m = result.moves[selected] %}
+{% set new = {} %}
+{% for p in m.placements %}{% set _ = new.update({(p.row, p.col): True}) %}{% endfor %}
+<h2>{{ m.word }} <span class="score">{{ m.score.total }}</span></h2>
+<p class="small">
+  {{ "Across" if m.direction == "across" else "Down" }} from row {{ m.start[0] + 1 }}, column {{ m.start[1] + 1 }}.
+  {% for w in m.score.words %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}
+  {% if m.score.bingo_bonus %} + bingo {{ m.score.bingo_bonus }}{% endif %}
+</p>
+<div class="board preview" aria-label="Board after {{ m.word }}">
+  {% for r in range(size) %}
+  <div class="board-row">
+    {% for c in range(size) %}
+    {% set v = m.board_after[r][c] %}
+    <span class="cell {{ bonus[r][c] }}{% if (r, c) in new %} new{% endif %}{% if v and v.islower() %} blank{% endif %}"
+          data-bonus="{{ bonus_label[r][c] }}">{{ (v or "") | upper }}</span>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>

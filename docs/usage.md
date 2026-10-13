@@ -1,25 +1,25 @@
 # WWF Solver: usage guide
 
-This guide covers everything you can run and use in the code today: installing it, the board and
-move model, scoring and rule checks, the solvers, choosing a dictionary, configuration, tests, and
-how to extend it.
+This guide covers everything you can run and use today: the web app, the HTTP API, the Python
+library (board and move model, scoring and rule checks, solvers, dictionaries), configuration,
+tests, and how to extend it.
 
 ## What works today
 
-The project is built in milestones (see the build spec). Milestones 1 and 2 are done:
+The project is built in milestones (see the build spec).
 
 | Area | Status |
 | --- | --- |
-| Core model: board, rack, moves, scoring, rule validation | Done |
+| Core model: board, rack, moves, scoring, rule validation | Done (M1) |
 | Dictionary loading, caching and choosing between word lists | Done |
-| Solvers: `anchor_trie` ("Smart brute force") and `dummy_random` (demo) | Done |
-| Image recognition (`wwf.vision`) | Not built (milestones 3-4; needs screenshot fixtures) |
-| HTTP API (`wwf.api`) | Not built (milestone 5) |
-| Web pages: upload, review, results, options | Not built (milestone 6) |
-| Docker image | Not built (milestone 7) |
+| Solvers: `anchor_trie` ("Smart brute force") and `dummy_random` (demo) | Done (M2) |
+| HTTP API (`wwf.api`) | Done (M5) |
+| Web pages: upload, review, results, options | Done (M6), not yet tried on a real phone |
+| Image recognition (`wwf.vision`) | Not built (M3-4; waiting on screenshot fixtures) |
+| Docker image | Not built (M7) |
 
-So for now the solver is a Python library: you type a board and rack into Python and get ranked
-moves back. There is no command-line tool or web server yet.
+Milestones 5 and 6 were built ahead of 3 and 4. Until recognition exists, uploading a screenshot
+keeps the image for reference, but you type the board in yourself on the Review page.
 
 ## Installing
 
@@ -40,7 +40,110 @@ Run anything inside the environment with `uv run`, for example `uv run python` o
 > If you have another virtualenv active, uv prints a warning that `VIRTUAL_ENV` does not match
 > `.venv` and ignores it. That's harmless. Run `deactivate` (or `unset VIRTUAL_ENV`) to silence it.
 
-## A first solve
+## Running the web app
+
+```sh
+uv run wwf-serve
+```
+
+Then open <http://127.0.0.1:8000>. The first start takes a few seconds while the default
+dictionary is built and cached.
+
+| Option | Effect |
+| --- | --- |
+| `--host 0.0.0.0` | Listen on your network so a phone on the same Wi-Fi can open `http://<your-computer's-IP>:8000` (find the IP with `ipconfig getifaddr en0` on a Mac) |
+| `--port 8080` | Use another port |
+| `--reload` | Restart automatically when code changes (development) |
+
+Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't survive a restart.
+
+### Using it
+
+1. **Upload** (`/`): pick a screenshot (on a phone this offers the camera), or press **Type a
+   board in** to start from an empty board. The last three boards you opened are listed as links.
+2. **Review** (`/review/<id>`): the uploaded image is shown next to an editable 15x15 grid. Click
+   or tap a square and type.
+   - Typing a letter fills the square and moves right.
+   - The arrow keys move between squares.
+   - Backspace clears the square and moves left; on an empty square, it moves left and clears that one.
+   - A **lowercase** letter marks a blank tile. On a phone, type the letter then press **Blank**
+     to toggle the last square between tile and blank.
+   - Enter up to 7 rack tiles below the board, using `?` for a blank.
+   - **Save and solve** saves the board and opens the results; **Save** only saves.
+   - **Re-run recognition** replaces the board with a fresh upload.
+3. **Results** (`/results/<id>`): the ranked moves with score, start square (row, column,
+   counting from 1), direction and leave. Click a move to see the board after playing it, with the
+   new tiles outlined and the score of each word formed. The top shows which solver ran, how long
+   it took, and its parameters and stats.
+4. **Options** (`/options`): choose the solver, its parameters and the word list. Saving applies
+   them to the board you came from (if any) and remembers them in a cookie for new boards.
+
+Sessions expire after 30 minutes without use. Everything works without JavaScript except the
+grid's keyboard shortcuts, the Blank button and the recent-boards list.
+
+## The HTTP API
+
+Interactive documentation for every endpoint is at <http://127.0.0.1:8000/docs> while the server
+runs; the raw schema is at `/openapi.json`. All endpoints live under `/api/v1`.
+
+| Method and path | Body | Returns |
+| --- | --- | --- |
+| `POST /recognize` | multipart `image` | Recognition result plus a new `session_id` |
+| `POST /session` | none | A new empty session, for typing a board in |
+| `GET /session/{id}` | none | Session state: board, rack, options, whether it has an image or result |
+| `GET /session/{id}/image` | none | The uploaded image |
+| `PUT /session/{id}/board` | `{board, rack}` | Session state; replaces both |
+| `PUT /session/{id}/options` | `{solver_id, params, dictionary_id?}` | Session state; 422 if invalid |
+| `POST /session/{id}/solve` | `{solver_id?, params?, dictionary_id?}` (all optional) | Ranked moves |
+| `GET /solvers` | none | Every solver with its parameter schema |
+| `GET /dictionaries` | none | Every word list |
+| `POST /validate` | `{board, rack, move, dictionary_id?}` | Named violations, plus the score if legal |
+| `GET /health` | none | Status, default dictionary and word count, whether a vision model is loaded |
+
+Formats:
+
+- **Board:** a 15x15 array of `null` or a one-letter string. Uppercase is a normal tile, lowercase
+  a blank.
+- **Rack:** a string, with `?` for a blank.
+- **Coordinates:** `[row, col]`, zero-based. The web pages show them counting from 1.
+- **Moves:** each solve returns a list of moves. Every move has `word`, `direction`, `start`,
+  `placements` (`row`, `col`, `letter`, `is_blank`), `score` (`total`, `bingo_bonus`, and per-word
+  `points`), `leave`, and `board_after`, the full board after playing it.
+
+On `POST /session/{id}/solve`:
+- **Params:** any `params` given are merged over the session's saved options for that call only.
+- **Switching solver:** a `solver_id` different from the session's starts from that solver's
+  defaults.
+
+Every response carries a `request_id`, also sent as the `X-Request-ID` header and written to the
+server log. Errors look like `{"error": "...", "detail": ..., "request_id": "..."}`:
+
+| Status | When |
+| --- | --- |
+| 400 `undecodable_image` | The upload isn't an image |
+| 404 `session_not_found` | Unknown or expired session |
+| 413 `image_too_large` | Upload over 10 MB |
+| 422 `validation_error`, `invalid_params`, `unknown_solver`, `unknown_dictionary` | Bad input |
+| 504 `solve_timeout` | The solver ran over 10 seconds (`detail.partial` is true) |
+
+A complete round trip with curl:
+
+```sh
+SID=$(curl -s -X POST localhost:8000/api/v1/session | python3 -c "import sys,json;print(json.load(sys.stdin)['session_id'])")
+python3 -c "
+import json; b = [[None]*15 for _ in range(15)]
+for i, ch in enumerate('HELLO'): b[7][5+i] = ch
+print(json.dumps({'board': b, 'rack': 'SATIRE?'}))" > board.json
+curl -s -X PUT -H 'content-type: application/json' -d @board.json localhost:8000/api/v1/session/$SID/board > /dev/null
+curl -s -X POST -H 'content-type: application/json' -d '{"params": {"max_results": 3}}' \
+  localhost:8000/api/v1/session/$SID/solve | python3 -m json.tool | head -40
+```
+
+## Using it from Python
+
+The web app is built on a plain Python library, which you can use directly.
+
+### A first solve
 
 ```python
 from wwf.core.board import Board
@@ -49,14 +152,14 @@ from wwf.core.dictionary import default_dictionary_registry
 from wwf.core.rack import Rack
 from wwf.solvers.registry import load_registry
 
-cfg = load_board_config()                        # config/wwf_classic.json
-words = default_dictionary_registry().get()      # the default word list (ENABLE1)
+cfg = load_board_config()  # config/wwf_classic.json
+words = default_dictionary_registry().get()  # the default word list (ENABLE1)
 solver = load_registry().get("anchor_trie")
 
 rows = ["..............."] * 15
-rows[7] = ".....HELLO....."                      # HELLO across row 7, columns 5-9
+rows[7] = ".....HELLO....."  # HELLO across row 7, columns 5-9
 board = Board.from_rows(cfg, rows)
-rack = Rack.from_string("SATIRE?")               # "?" is a blank
+rack = Rack.from_string("SATIRE?")  # "?" is a blank
 
 result = solver.solve(board, rack, words, cfg, max_results=5)
 for m in result.moves:
@@ -178,10 +281,10 @@ candidates, and it always equals `score_move(...).total`.
 ```python
 from wwf.solvers.registry import load_registry
 
-registry = load_registry()           # reads config/solvers.json
-registry.default_id                  # "anchor_trie"
-solver = registry.get("anchor_trie") # KeyError for unknown or disabled ids
-for info in registry.infos():        # every listed solver, including planned ones
+registry = load_registry()  # reads config/solvers.json
+registry.default_id  # "anchor_trie"
+solver = registry.get("anchor_trie")  # KeyError for unknown or disabled ids
+for info in registry.infos():  # every listed solver, including planned ones
     print(info.id, info.display_name, info.enabled, [p.name for p in info.params])
 ```
 
@@ -271,9 +374,9 @@ occasional word the game rejects, or a game word the solver never suggests.
 from wwf.core.dictionary import default_dictionary_registry
 
 dictionaries = default_dictionary_registry()
-dictionaries.get()           # the default
-dictionaries.get("words")    # a specific list; KeyError if unknown
-[i.id for i in dictionaries.infos()]   # ['enable1', 'words']
+dictionaries.get()  # the default
+dictionaries.get("words")  # a specific list; KeyError if unknown
+[i.id for i in dictionaries.infos()]  # ['enable1', 'words']
 ```
 
 You can change the default in two ways:
@@ -368,6 +471,7 @@ This file is described under [Dictionaries](#dictionaries).
 
    from wwf.solvers.base import SolverParam, SolverResult, resolve_params
 
+
    class GreedyVowelsSolver:
        id = "greedy_vowels"
        display_name = "Greedy vowels"
@@ -407,6 +511,9 @@ What the tests cover:
   - config rejection of malformed layouts
   - the dictionary cache and the dictionary registry
   - a Hypothesis property that scores don't change when the board is transposed
+- **`tests/api`:**
+  - every API route and error code, plus session expiry, options validation and the solve timeout
+  - the pages, driven through their HTML forms as a browser without JavaScript would
 - **`tests/solvers`:**
   - the equivalence test: `anchor_trie` must find exactly the same legal moves and scores as the slow brute-force generator in `tests/solvers/reference.py`, on 20 random boards
   - every returned move passes `validate_move`
@@ -421,9 +528,9 @@ config/                   board layout, solver registry, dictionary list
 assets/dictionaries/      word lists (.txt)
 src/wwf/core/             board.py, rack.py, move.py, scoring.py, dictionary.py, config.py
 src/wwf/solvers/          base.py, registry.py, anchor_trie.py, dummy_random.py
+src/wwf/api/              app.py (factory, wwf-serve), services.py, session.py, schemas.py, routes_*.py
+src/wwf/web/              templates/ (Jinja2 pages), static/ (board.css, app.js, vendored htmx)
 src/wwf/vision/           (milestones 3-4)
-src/wwf/api/              (milestone 5)
-src/wwf/web/              (milestone 6)
 tests/                    core/, solvers/, vision/, api/
 docs/usage.md             this file
 .cache/                   dictionary caches (generated, git-ignored)
@@ -433,6 +540,9 @@ docs/usage.md             this file
 
 | Symptom | Cause and fix |
 | --- | --- |
+| `address already in use` from `wwf-serve` | Another server is on that port. Use `--port 8080`, or stop the other one. |
+| Phone can't open the app | Start with `--host 0.0.0.0`, use the computer's LAN IP, keep both on the same Wi-Fi, and allow Python through the macOS firewall if asked. |
+| "Session expired" | Sessions last 30 minutes after last use, and are lost when the server restarts. Start a new board. |
 | First solve takes several seconds | The dictionary is being built and cached. Later runs are fast. |
 | `RegistryError: solvers.json enables unknown solver id` | An enabled entry in `config/solvers.json` has no class in `src/wwf/solvers/`. Fix the id or set `"enabled": false`. |
 | `DictionaryError: default dictionary 'x' is not available` | `WWF_DICTIONARY` or the `"default"` in `config/dictionaries.json` names a list that doesn't exist. |

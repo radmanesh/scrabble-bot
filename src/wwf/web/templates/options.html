@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Options · WWF Solver{% endblock %}
+{% block body_class %}page-options{% endblock %}
+{% block content %}
+<h1>Options</h1>
+{% if saved %}<p class="notice ok">Saved{% if session %} for this board{% endif %}.
+  {% if session %}<a href="/review/{{ session.id }}">Back to the board</a>{% endif %}</p>{% endif %}
+
+<form id="options-form" action="/options" method="post">
+  <input type="hidden" name="session_id" value="{{ session.id if session else '' }}">
+
+  <fieldset class="card">
+    <legend>Solver</legend>
+    {% for s in solvers %}
+    <div class="solver{% if not s.enabled %} planned{% endif %}">
+      <label class="solver-choice">
+        <input type="radio" name="solver_id" value="{{ s.id }}"
+               {% if s.id == chosen %}checked{% endif %}{% if not s.enabled %} disabled{% endif %}>
+        <span class="solver-name">{{ s.display_name }}</span>
+        {% if not s.enabled %}<span class="badge">planned</span>{% endif %}
+      </label>
+      {% if s.description %}<p class="hint">{{ s.description }}</p>{% endif %}
+
+      {% if s.enabled and s.params %}
+      <div class="params">
+        {% for p in s.params %}
+        {% set field = "p." ~ s.id ~ "." ~ p.name %}
+        {% set value = values[s.id][p.name] %}
+        <div class="param">
+          {% if p.type == "bool" %}
+            <input type="hidden" name="{{ field }}" value="false">
+            <label><input type="checkbox" name="{{ field }}" value="true" {% if value | truthy %}checked{% endif %}>
+              {{ p.label }}</label>
+          {% else %}
+            <label for="{{ field }}">{{ p.label }}</label>
+            {% if p.type == "choice" %}
+            <select id="{{ field }}" name="{{ field }}">
+              {% for ch in p.choices %}<option value="{{ ch }}" {% if ch == value %}selected{% endif %}>{{ ch }}</option>{% endfor %}
+            </select>
+            {% else %}
+            <input id="{{ field }}" name="{{ field }}" type="number" value="{{ value }}"
+                   step="{{ '1' if p.type == 'int' else 'any' }}"
+                   {% if p.min is not none %}min="{{ p.min | int if p.type == 'int' else p.min }}"{% endif %}
+                   {% if p.max is not none %}max="{{ p.max | int if p.type == 'int' else p.max }}"{% endif %}>
+            {% endif %}
+          {% endif %}
+          {% if p.help %}<p class="hint small">{{ p.help }}</p>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="card">
+    <legend>Dictionary</legend>
+    <label for="dictionary_id">Word list</label>
+    <select id="dictionary_id" name="dictionary_id">
+      {% for d in dictionaries %}
+      <option value="{{ d.id }}" {% if d.id == dictionary_id %}selected{% endif %}>{{ d.label }}{% if d.default %} (default){% endif %}</option>
+      {% endfor %}
+    </select>
+    {% for d in dictionaries %}{% if d.description %}<p class="hint small"><b>{{ d.label }}:</b> {{ d.description }}</p>{% endif %}{% endfor %}
+  </fieldset>
+
+  <div class="actions"><button type="submit" class="primary">Save</button></div>
+</form>
+{% endblock %}

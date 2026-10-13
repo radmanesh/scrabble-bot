@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block body_class %}page-upload{% endblock %}
+{% block content %}
+<h1>Solve a board</h1>
+
+{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+
+<form id="upload-form" class="card" action="/upload" method="post" enctype="multipart/form-data">
+  <label class="dropzone" id="dropzone">
+    <input type="file" name="image" accept="image/*" capture="environment" required>
+    <span class="dropzone-text">Take a photo or choose a screenshot<br><small>or drop an image here</small></span>
+  </label>
+  <button type="submit" class="primary">Read board</button>
+  <p class="progress" id="upload-progress" hidden>Reading the board…</p>
+  {% if not model_loaded %}
+  <p class="hint">Board recognition isn't built yet: the image is kept for reference and you
+    type the board in on the next page.</p>
+  {% endif %}
+</form>
+
+<form action="/new" method="post" class="card inline">
+  <p>No screenshot handy?</p>
+  <button type="submit">Type a board in</button>
+</form>
+
+<section id="recent" class="card" hidden>
+  <h2>Recent boards</h2>
+  <ul id="recent-list"></ul>
+</section>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Review board · WWF Solver{% endblock %}
+{% block body_class %}page-review{% endblock %}
+{% block content %}
+<div class="review-layout" data-session="{{ session.id }}">
+
+  {% if session.image %}
+  <section class="shot card">
+    <input type="checkbox" id="show-overlay" class="overlay-toggle" checked>
+    <label for="show-overlay" class="small">Show detected grid</label>
+    <div class="shot-frame">
+      <img src="/api/v1/session/{{ session.id }}/image" alt="Uploaded screenshot">
+      {% if recognition and recognition.geometry %}
+      {% set g = recognition.geometry %}
+      <svg class="overlay" viewBox="0 0 {{ g.image_width }} {{ g.image_height }}" preserveAspectRatio="none" aria-hidden="true">
+        {% for row in g.cells %}{% for b in row %}<rect x="{{ b[0] }}" y="{{ b[1] }}" width="{{ b[2] }}" height="{{ b[3] }}"/>{% endfor %}{% endfor %}
+        {% for b in g.rack %}<rect class="rack-box" x="{{ b[0] }}" y="{{ b[1] }}" width="{{ b[2] }}" height="{{ b[3] }}"/>{% endfor %}
+      </svg>
+      {% endif %}
+    </div>
+    {% if recognition and recognition.warnings %}
+    <p class="hint">
+      {% if "recognition_unavailable" in recognition.warnings %}
+        Board recognition isn't built yet. Type the board in using the grid.
+      {% else %}
+        Warnings: {{ recognition.warnings | join(", ") }}
+      {% endif %}
+    </p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <form id="board-form" class="card board-card" action="/review/{{ session.id }}" method="post" autocomplete="off">
+    <h1>Check the board</h1>
+    <p class="hint">Type letters into the squares. <span class="kbd">lowercase</span> marks a blank tile
+      (or use <b>Blank</b>). Arrow keys move; Backspace clears.
+      {% if recognition and not recognition.warnings %}Amber squares need a second look.{% endif %}</p>
+
+    <div class="board" role="grid" aria-label="Board">
+      {% for r in range(size) %}
+      <div class="board-row" role="row">
+        {% for c in range(size) %}
+        {% set v = board[r][c] or "" %}
+        <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if v and v.islower() %} blank{% endif %}"
+               name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"
+               data-r="{{ r }}" data-c="{{ c }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
+               autocapitalize="characters" spellcheck="false" inputmode="text"
+               aria-label="Row {{ r + 1 }} column {{ c + 1 }}{% if bonus_label[r][c] %}, {{ bonus_label[r][c] }}{% endif %}">
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="rack-row">
+      <span class="rack-label">Rack</span>
+      {% for t in rack %}
+      <input class="cell rack-cell{% if t == '?' %} blank{% endif %}" name="r-{{ loop.index0 }}" value="{{ t }}"
+             maxlength="1" placeholder=" " autocapitalize="characters" spellcheck="false" aria-label="Rack tile {{ loop.index }}">
+      {% endfor %}
+    </div>
+    <p class="hint small">Use <span class="kbd">?</span> for a blank on your rack.</p>
+
+    <div class="actions">
+      <button type="button" id="blank-toggle" class="js-only" hidden>Blank</button>
+      <button type="submit" name="action" value="save">Save</button>
+      <button type="submit" name="action" value="solve" class="primary">Save and solve</button>
+    </div>
+    {% if request.query_params.get("saved") %}<p class="notice ok">Saved.</p>{% endif %}
+  </form>
+
+  <form class="card inline" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
+    <p>Retook the screenshot?</p>
+    <input type="file" name="image" accept="image/*" capture="environment" required>
+    <button type="submit">Re-run recognition</button>
+  </form>
+</div>
+{% endblock %}
