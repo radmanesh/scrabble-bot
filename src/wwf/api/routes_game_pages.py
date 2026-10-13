@@ -187,6 +187,8 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
     ctx.setdefault("rack_review", unsure_rack + [False] * (MAX_RACK - len(unsure_rack)))
     ctx.setdefault("notice", game.notice)
     game.notice = None  # shown once
+    ctx.setdefault("flash", game.flash)
+    game.flash = None
     ctx.setdefault("board", game.board)
     ctx.setdefault("rack", rack)
     ctx.setdefault("errors", [])
@@ -228,6 +230,13 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         open_player=game.open_player or game.player_to_move,
         **ctx,
     )
+
+
+def _recorded(turn: Any) -> str:
+    who = "Your" if turn.player == "me" else "The opponent's"
+    if turn.kind == "pass":
+        return f"{who} pass was recorded."
+    return f"{who} move was recorded: {turn.word} for {turn.points} points."
 
 
 def _finish(request: Request, game: Game, labelled: bool = False) -> Response:
@@ -385,9 +394,10 @@ def record_suggestion(request: Request, game_id: str, n: int, turn: str = Form("
         return game
     svc = get_services(request)
     try:
-        gameplay.record_solver_move(
+        done = gameplay.record_solver_move(
             svc, game, n, expected_turn=int(turn) if turn.isdigit() else None
         )
+        game.flash = _recorded(done)
     except MoveRejected as e:
         return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
     except ApiError:
@@ -503,10 +513,11 @@ def compose_record(
         return _page(request, game, 422, form_values=values, errors=[problem or ""], do_action=do)
     label = svc.dictionaries.info(game.dictionary_id).label
     try:
-        gameplay.record_typed_move(
+        done = gameplay.record_typed_move(
             svc, game, who, word, start[0], start[1], direction,
             force=bool(force), expected_turn=int(turn) if turn.isdigit() else None,
         )  # fmt: skip
+        game.flash = _recorded(done)
     except MoveRejected as e:
         preview = _preview_payload(svc, game, word, start, direction)
         errors = [gameplay.explain(p, label) for p in e.problems]
@@ -521,7 +532,7 @@ def pass_turn(request: Request, game_id: str, who: str = Form("opponent")) -> Re
     if isinstance(game, HTMLResponse):
         return game
     try:
-        gameplay.pass_turn(game, "me" if who == "me" else "opponent")
+        game.flash = _recorded(gameplay.pass_turn(game, "me" if who == "me" else "opponent"))
     except MoveRejected as e:
         return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
     return _finish(request, game)
@@ -534,9 +545,11 @@ def undo(request: Request, game_id: str) -> Response:
     if isinstance(game, HTMLResponse):
         return game
     try:
-        gameplay.undo(game)
+        undone = gameplay.undo(game)
     except ApiError:
         return _page(request, game, 422, errors=["Nothing to undo."])
+    what = "pass" if undone.kind == "pass" else undone.word or "board update"
+    game.flash = f"Turn {undone.n} ({what}) was reopened. Fix it, then confirm it again."
     return _finish(request, game)
 
 

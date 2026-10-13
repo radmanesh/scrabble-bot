@@ -9,6 +9,7 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#main">Skip to the page</a>
   <header class="topbar">
     <a class="brand" href="/">WWF Solver</a>
     <nav>
@@ -16,7 +17,7 @@
       <a href="/options{% if game %}?game={{ game.id }}{% endif %}">Options</a>
     </nav>
   </header>
-  <main>
+  <main id="main" tabindex="-1">
     {% if errors %}
     <div class="notice error" role="alert">
       <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>

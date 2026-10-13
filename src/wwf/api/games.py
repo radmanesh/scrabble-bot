@@ -119,6 +119,7 @@ class Game:
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     notice: dict[str, Any] | None = field(default=None, repr=False)  # shown once
+    flash: str | None = field(default=None, repr=False)  # what the last action did, shown once
 
     # --- derived ----------------------------------------------------------------------------
 

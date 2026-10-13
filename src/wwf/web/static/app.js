@@ -193,6 +193,7 @@
 
     function markBlank(input) {
       input.classList.toggle("blank", /^[a-z]$/.test(input.value) || input.value === "?");
+      describeCell(input);
     }
     function move(input, dr, dc) {
       const r = +input.dataset.r, c = +input.dataset.c;
@@ -212,15 +213,42 @@
       }
     }
 
+    // One tab stop for the whole board: Tab enters at the last square used and leaves on the next
+    // Tab; arrow keys do the moving. Without JavaScript every square stays an ordinary tab stop.
+    let rover = cells.find((c) => !c.readOnly && !c.disabled) || cells[0];
+    cells.forEach((c) => { c.tabIndex = -1; });
+    rover.tabIndex = 0;
+    function setRover(el) { if (el === rover) return; rover.tabIndex = -1; rover = el; el.tabIndex = 0; }
+    const zoomButton = document.getElementById("board-zoom");
+    const card = document.getElementById("board-form");
+    if (zoomButton) {
+      const tools = zoomButton.closest(".board-tools");
+      if (tools) tools.hidden = false;
+      const setZoom = (on) => {
+        card.classList.toggle("zoomed", on);
+        zoomButton.setAttribute("aria-pressed", String(on));
+        zoomButton.textContent = on ? "Smaller board" : "Larger board";
+        if (on && lastFocused) lastFocused.scrollIntoView({ block: "nearest", inline: "nearest" });
+      };
+      zoomButton.addEventListener("click", () => setZoom(!card.classList.contains("zoomed")));
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && card.classList.contains("zoomed")) { setZoom(false); zoomButton.focus(); }
+      });
+    }
+
     cells.forEach((input) => {
       input.addEventListener("focus", () => {
-        lastFocused = input; input.select(); pointOpponentAt(input);
+        lastFocused = input; setRover(input); input.select(); pointOpponentAt(input);
+        if (card && card.classList.contains("zoomed")) input.scrollIntoView({ block: "nearest", inline: "nearest" });
       });
       input.addEventListener("keydown", (e) => {
         const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
         if (arrows[e.key]) {
           e.preventDefault();
           move(input, ...arrows[e.key]);
+        } else if (e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          move(input, 0, e.key === "Home" ? -size : size);  // to the start or end of the row
         } else if (input.readOnly) {
           // a square from a confirmed turn: read-only, only navigation works
           if (!e.metaKey && !e.ctrlKey && e.key.length === 1) e.preventDefault();
@@ -290,6 +318,20 @@
 
 
 
+  // What a square says to assistive technology, kept in step with what it shows.
+  function describeCell(input) {
+    const where = input.dataset.where;
+    if (!where) return;
+    const v = input.value;
+    const kind = /[a-z]/.test(v) || input.classList.contains("blank") ? "blank tile " : "tile ";
+    let text;
+    if (input.classList.contains("proposed")) text = `${where}, proposed ${kind}${v.toUpperCase()}`;
+    else if (!v) text = `${where}, empty`;
+    else if (input.readOnly) text = `${where}, ${kind}${v.toUpperCase()}, confirmed, locked`;
+    else text = `${where}, ${kind}${v.toUpperCase()}, not confirmed yet`;
+    input.setAttribute("aria-label", text);
+  }
+
   // --- previews drawn on the board -----------------------------------------------------------
   // A previewed word or suggestion is shown on the board squares without being part of the
   // form: previewed tiles are disabled, so the board form never submits them, and clear() puts
@@ -313,6 +355,7 @@
         el.value = value; el.disabled = wasDisabled;
         el.classList.remove("proposed", "crossing", "start-marker");
         if (!value) el.classList.remove("blank");
+        describeCell(el);
       });
       touched = [];
     }
@@ -329,6 +372,7 @@
         } else {
           el.classList.add("crossing");
         }
+        describeCell(el);
       });
       if (start) {
         const el = cellAt(start[0] - 1, start[1] - 1);

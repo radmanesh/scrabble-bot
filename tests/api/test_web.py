@@ -416,3 +416,36 @@ def test_no_legal_moves_explains_and_offers_pass(client: TestClient, services: S
     html = client.get(f"/game/{gid}").text
     if services.game(gid).last_result and not services.game(gid).last_result.moves:
         assert "No legal moves with this rack" in html and "I pass this turn" in html
+
+
+# --- accessibility ---------------------------------------------------------------------------
+
+
+def test_every_square_is_a_labelled_grid_cell_with_its_state(client: TestClient) -> None:
+    gid = _started(client)
+    html = client.get(f"/game/{gid}").text
+    assert html.count('role="gridcell"') == 225 and html.count('role="row"') == 15
+    assert 'aria-label="Row 8, column 6, tile H, confirmed, locked"' in html
+    assert 'aria-label="Row 1, column 4, triple word, empty"' in html
+    assert 'aria-label="Row 8, column 8, double word, empty"' in html or "double word" in html
+    assert 'class="skip-link"' in html and 'id="main"' in html
+
+
+def test_the_result_of_an_action_is_in_a_status_region(client: TestClient) -> None:
+    gid = _started(client, "start_opponent")
+    r = client.post(
+        f"/game/{gid}/compose/record",
+        data={"word": "HAT", "row": "8", "col": "6", "direction": "down",
+              "player": "opponent", "turn": "2"},
+        follow_redirects=True,
+    )  # fmt: skip
+    assert 'role="status"' in r.text and "The opponent&#39;s move was recorded: HAT for" in r.text
+    assert "was recorded" not in client.get(f"/game/{gid}").text  # shown once
+
+
+def test_pass_and_undo_say_what_they_did(client: TestClient) -> None:
+    gid = _started(client, "start_opponent")
+    r = client.post(f"/game/{gid}/pass", data={"who": "opponent"}, follow_redirects=True)
+    assert "The opponent&#39;s pass was recorded." in r.text
+    r = client.post(f"/game/{gid}/undo", follow_redirects=True)
+    assert "was reopened" in r.text

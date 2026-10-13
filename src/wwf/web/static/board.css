@@ -332,3 +332,33 @@ input.cell.proposed:disabled:placeholder-shown { background: var(--card); }
 .moves tr.selected a { text-decoration: underline; }
 .suggestions .moves th { font-size: 0.8rem; color: var(--muted); }
 .run-details { margin-top: 10px; }
+
+
+/* accessibility and small screens */
+html { scroll-padding-top: 72px; scroll-padding-bottom: 24px; }
+.skip-link { position: absolute; left: 8px; top: -60px; z-index: 20; background: var(--card); color: var(--ink); border: 2px solid var(--accent); border-radius: 8px; padding: 8px 12px; }
+.skip-link:focus { top: 8px; }
+main:focus { outline: none; }
+main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: max(48px, env(safe-area-inset-bottom)); }
+.topbar { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+input, button, select, summary, a.button { scroll-margin-top: 72px; }
+a:focus-visible, button:focus-visible, summary:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.cw { display: flex; min-width: 0; min-height: 0; }
+.cw > .cell { flex: 1 1 auto; }
+.flash-region:empty { display: none; }
+.flash-region .notice { margin: 0 0 12px; }
+
+/* confirmed squares carry a hatch as well as a grey wash, so they are not told apart by colour alone */
+.cell.locked { background-image: repeating-linear-gradient(135deg, rgba(0,0,0,.14) 0 2px, transparent 2px 7px); }
+.cell.review { outline-style: dashed; }
+
+/* a larger board for precise touch editing: squares of about 44px, scrolled inside the card */
+.board-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 8px; }
+@media (min-width: 700px) { .board-tools #board-zoom { display: none; } }
+.board-card.zoomed .board-wrap { overflow: auto; max-height: 72vh; max-width: none; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 8px; padding-top: 2px; }
+.board-card.zoomed .board, .board-card.zoomed .guide-cols { width: 720px; max-width: none; }
+.board-card.zoomed .board-wrap { display: block; }
+.board-card.zoomed .guide-cols { margin-left: 1.7em; }
+.board-card.zoomed .guide-rows { display: none; }
+.board-card.zoomed .board { margin-left: 1.7em; font-size: 1.1rem; }
+@media (forced-colors: active) { .cell.proposed, .cell.pending, .cell.review, .cell.start-marker { outline-color: Highlight; } }

@@ -92,26 +92,36 @@
 
   {% set proposed = {} %}
   {% if composer_preview %}{% for c in composer_preview.cells %}{% set _ = proposed.update({(c.r, c.c): c}) %}{% endfor %}{% endif %}
+  {# Premium squares spelled out for assistive technology (the squares show TW, DL, ...). #}
+  {% set premium = {"TW": "triple word", "DW": "double word", "TL": "triple letter", "DL": "double letter", "★": "centre star"} %}
+  <div class="board-tools js-only" hidden>
+    <button type="button" id="board-zoom" aria-pressed="false">Larger board</button>
+    <span class="hint small">Arrow keys move around the board. Tab leaves it.</span>
+  </div>
   <div class="board-wrap">
   <div class="guide-cols" aria-hidden="true">{% for c in range(size) %}<span>{{ c + 1 }}</span>{% endfor %}</div>
   <div class="guide-rows" aria-hidden="true">{% for r in range(size) %}<span>{{ r + 1 }}</span>{% endfor %}</div>
-  <div class="board" role="grid" aria-label="Board">
+  <div class="board" role="grid" aria-label="Board, 15 by 15. Arrow keys move between squares." aria-rowcount="15" aria-colcount="15">
     {% for r in range(size) %}
-    <div class="board-row" role="row">
+    <div class="board-row" role="row" aria-rowindex="{{ r + 1 }}">
       {% for c in range(size) %}
       {% set v = board[r][c] or "" %}
       {% set pc = proposed.get((r, c)) %}
+      {% set where = "Row " ~ (r + 1) ~ ", column " ~ (c + 1) ~ (", " ~ premium[bonus_label[r][c]] if bonus_label[r][c] else "") %}
+      <div class="cw" role="gridcell" aria-colindex="{{ c + 1 }}">
       {% if pc and pc.new %}
       {# a previewed tile: shown on the square but not part of the form, so Save can't submit it #}
       <input class="cell {{ bonus[r][c] }} proposed{% if pc.blank %} blank{% endif %}" value="{{ pc.letter }}" disabled
-             data-r="{{ r }}" data-c="{{ c }}" aria-label="Row {{ r + 1 }} column {{ c + 1 }}, proposed {{ 'blank ' if pc.blank }}{{ pc.letter }}">
+             data-r="{{ r }}" data-c="{{ c }}" data-where="{{ where }}"
+             aria-label="{{ where }}, proposed {{ 'blank tile ' if pc.blank else 'tile ' }}{{ pc.letter }}">
       {% else %}
       <input class="cell {{ bonus[r][c] }}{% if needs_review[r][c] %} review{% endif %}{% if (r, c) in recent %} recent{% endif %}{% if (r, c) in open_tiles and game.started %} pending{% endif %}{% if (r, c) in locked %} locked{% endif %}{% if v and v.islower() %} blank{% endif %}{% if pc and not pc.new %} crossing{% endif %}"
              name="c-{{ r }}-{{ c }}" value="{{ v }}" maxlength="1"{% if (r, c) in locked %} readonly tabindex="-1"{% endif %}
-             data-r="{{ r }}" data-c="{{ c }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
+             data-r="{{ r }}" data-c="{{ c }}" data-where="{{ where }}" placeholder="{{ bonus_label[r][c] or ' ' }}"
              autocapitalize="characters" spellcheck="false" inputmode="text"
-             aria-label="Row {{ r + 1 }} column {{ c + 1 }}{% if bonus_label[r][c] %}, {{ bonus_label[r][c] }}{% endif %}">
+             aria-label="{{ where }}, {% if not v %}empty{% else %}{{ 'blank tile ' if v.islower() else 'tile ' }}{{ v | upper }}{% if (r, c) in locked %}, confirmed, locked{% elif (r, c) in open_tiles and game.started %}, not confirmed yet{% endif %}{% endif %}{% if needs_review[r][c] %}, the reader is unsure{% endif %}">
       {% endif %}
+      </div>
       {% endfor %}
     </div>
     {% endfor %}

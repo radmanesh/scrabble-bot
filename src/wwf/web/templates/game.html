@@ -5,6 +5,11 @@
 <div class="game" data-game="{{ game.id }}">
   {% include "_game_header.html" %}
 
+  {# What the last action did, shown once; a status region so it is announced too. #}
+  <div class="flash-region" role="status" aria-live="polite">
+    {% if flash %}<p class="notice ok">{{ flash }}</p>{% endif %}
+  </div>
+
   {% if drew is not none %}
   <section class="card draw-prompt">
     <form action="/game/{{ game.id }}/draw" method="post">
