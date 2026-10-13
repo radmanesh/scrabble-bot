@@ -1,0 +1,36 @@
+{# The three ways to start a game. On a computer the camera button opens a webcam viewfinder
+   (app.js); on a phone the capture attribute opens the camera app. #}
+<section class="card capture-card">
+  <form id="camera-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="source" value="photo">
+    <label class="button primary big camera-button" id="camera-button">
+      <span aria-hidden="true">📷</span> Take a photo of the board
+      <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
+    </label>
+    <noscript><button type="submit">Read board</button></noscript>
+  </form>
+
+  {% with stay=False %}{% include "_viewfinder.html" %}{% endwith %}
+
+  <p class="hint small">Get the whole phone screen in the frame, board and rack included. Some angle or glare is fine.</p>
+  <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
+</section>
+
+<section class="card secondary-card">
+  <form id="file-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="source" value="auto">
+    <label class="dropzone" id="dropzone">
+      <input type="file" name="image" accept="image/*" class="file-hidden" required>
+      <span class="dropzone-text">Upload image<br><small>a screenshot or photo: choose a file, or drop one here</small></span>
+    </label>
+    <noscript><button type="submit">Upload</button></noscript>
+  </form>
+  <form action="/new" method="post" class="inline-link">
+    <button type="submit" class="link">Enter board manually</button>
+  </form>
+</section>
+
+{% if not model_loaded %}
+<p class="hint small">The board reader isn't trained yet: pictures are kept with the game and you type the board
+  in on the next page.</p>
+{% endif %}

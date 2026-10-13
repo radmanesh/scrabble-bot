@@ -1,73 +1,59 @@
 {% extends "base.html" %}
 {% block body_class %}page-upload{% endblock %}
 {% block content %}
+{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+<div class="notice error" id="send-error" role="alert" hidden></div>
+
 {% if games %}
-<h1>Your games</h1>
-<section class="card games-card">
-  <ul class="games">
-    {% for g in games %}
-    <li class="game-row">
-      <a class="game-link" href="/game/{{ g.id }}">
-        <span class="game-name">{{ g.name }}</span>
-        <span class="game-meta">
-          {% if not g.started %}Setting up{% else %}{{ "Your turn" if g.phase == "my_turn" else "Opponent's turn" }}
-          · {{ g.me }}–{{ g.opponent }} · {{ g.turns }} turn{{ "s" if g.turns != 1 }}{% endif %}
-          · {{ g.pictures }} picture{{ "s" if g.pictures != 1 }} · {{ g.updated }}
-        </span>
-      </a>
-      <form action="/game/{{ g.id }}/delete" method="post" data-confirm="Delete this game and its history?">
-        <button type="submit" class="link" aria-label="Delete {{ g.name }}">Delete</button>
-      </form>
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-<h2>Start a new game</h2>
+<div class="page-head">
+  <h1>Your games</h1>
+  {# A details element opens without JavaScript; the choices drop down under the title. #}
+  <details class="new-game" id="new-game"{% if error %} open{% endif %}>
+    <summary class="button primary">New game</summary>
+    <div class="new-game-panel">
+      <p class="hint">Start from a photo of the game on your phone, an uploaded image, or by typing
+        the board in.</p>
+      {% include "_new_game.html" %}
+    </div>
+  </details>
+</div>
+
+<ul class="game-cards">
+  {% for g in games %}
+  <li class="game-card card">
+    <div class="card-board">{% include "_board_preview.html" %}</div>
+    <div class="card-body">
+      <h2 class="game-name">{{ g.name }}</h2>
+      <p class="game-status {{ 'mine' if g.status == 'Your turn' else '' }}">{{ g.status }}</p>
+      {% if g.started %}
+      <p class="game-score">You <b>{{ g.me }}</b> · Opponent <b>{{ g.opponent }}</b>
+        <span class="game-meta">· {{ g.turns }} turn{{ "s" if g.turns != 1 }}</span></p>
+      {% endif %}
+      <p class="game-meta">Updated {{ g.updated }}{% if g.pictures %} · {{ g.pictures }} picture{{ "s" if g.pictures != 1 }}{% endif %}</p>
+      <div class="card-actions">
+        <a class="button primary" href="/game/{{ g.id }}">Continue game<span class="sr-only">: {{ g.name }}</span></a>
+        <details class="card-menu">
+          <summary class="button" aria-label="More actions for {{ g.name }}">More</summary>
+          <div class="card-menu-body">
+            <form action="/game/{{ g.id }}/rename" method="post" class="inline-form">
+              <input name="name" value="{{ g.name }}" maxlength="60" required aria-label="New name for {{ g.name }}">
+              <button type="submit">Rename</button>
+            </form>
+            <form action="/game/{{ g.id }}/delete" method="post"
+                  data-confirm="Delete “{{ g.name }}” with its history and pictures? This can't be undone.">
+              <button type="submit" class="link danger">Delete “{{ g.name }}”</button>
+            </form>
+          </div>
+        </details>
+      </div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
 {% else %}
 <h1>Start a game</h1>
 <p class="hint">Take a picture of the game on your phone. The board is read from it, you check it,
   and from then on every turn is added to the game.</p>
+{% include "_new_game.html" %}
 {% endif %}
-
-{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
-<div class="notice error" id="send-error" role="alert" hidden></div>
-
-{# Main way in: the camera. On phones the capture attribute opens the camera app directly. #}
-<section class="card capture-card">
-  <form id="camera-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
-    <input type="hidden" name="source" value="photo">
-    <label class="button primary big camera-button" id="camera-button">
-      <span aria-hidden="true">📷</span> Take a photo of the board
-      <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
-    </label>
-    <noscript><button type="submit">Read board</button></noscript>
-  </form>
-
-  {% with stay=False %}{% include "_viewfinder.html" %}{% endwith %}
-
-  <p class="hint small">Get the whole phone screen in the frame, board and rack included. Some angle or glare is fine.</p>
-  <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
-</section>
-
-{# Second way in: an existing screenshot or photo from the device. #}
-<section class="card secondary-card">
-  <form id="file-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
-    <input type="hidden" name="source" value="auto">
-    <label class="dropzone" id="dropzone">
-      <input type="file" name="image" accept="image/*" class="file-hidden" required>
-      <span class="dropzone-text">Or upload a screenshot<br><small>choose a file, or drop one here</small></span>
-    </label>
-    <noscript><button type="submit">Upload</button></noscript>
-  </form>
-  <form action="/new" method="post" class="inline-link">
-    <button type="submit" class="link">Type a board in by hand</button>
-  </form>
-</section>
-
-{% if not model_loaded %}
-<p class="hint small">The board reader isn't trained yet: pictures are kept with the game and you type the board
-  in on the next page.</p>
-{% endif %}
-
-
 {% endblock %}

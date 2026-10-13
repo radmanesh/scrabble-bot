@@ -234,3 +234,37 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .turn-thumb { margin-left: auto; }
 .turn-thumb img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); vertical-align: middle; }
 .turn-log li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* home: game cards */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.page-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
+.page-head h1 { margin: 0; }
+.new-game[open] { flex: 1 1 100%; }
+.new-game > summary { list-style: none; cursor: pointer; text-align: center; }
+.new-game > summary::-webkit-details-marker { display: none; }
+.new-game-panel { margin-top: 12px; }
+.game-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: 1fr; }
+@media (min-width: 720px) { .game-cards { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1040px) { .game-cards { grid-template-columns: repeat(3, 1fr); } }
+.game-card { display: flex; gap: 14px; margin: 0; align-items: flex-start; }
+.card-board { flex: 0 0 112px; }
+.card-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.card-body p { margin: 0; }
+.game-name { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
+.game-status { font-weight: 700; }
+.game-status.mine { color: var(--accent); }
+.game-score { font-variant-numeric: tabular-nums; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-top: 8px; }
+.card-menu > summary { list-style: none; cursor: pointer; }
+.card-menu > summary::-webkit-details-marker { display: none; }
+.card-menu-body { margin-top: 8px; display: grid; gap: 8px; }
+.card-menu-body form { margin: 0; }
+button.link.danger { color: var(--err); }
+.board-preview { width: 100%; height: auto; display: block; border-radius: 6px; }
+.pv-frame { fill: var(--bg); stroke: var(--line); stroke-width: .08; }
+.pv-tile { fill: var(--tile); stroke: var(--tile-ink); stroke-width: .06; }
+.pv-draft { fill: none; stroke: var(--accent); stroke-width: .14; stroke-dasharray: .22 .16; }
+.pv-tw { fill: var(--tw); opacity: .55; } .pv-dw { fill: var(--dw); opacity: .55; }
+.pv-tl { fill: var(--tl); opacity: .55; } .pv-dl { fill: var(--dl); opacity: .55; }
+.pv-ctr { fill: var(--ctr); opacity: .55; }
+@media (max-width: 380px) { .game-card { flex-direction: column; } .card-board { flex-basis: auto; width: 140px; } }

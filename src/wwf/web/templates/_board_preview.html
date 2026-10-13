@@ -1,0 +1,12 @@
+{# A thumbnail of a saved board. `g.preview` is 15 strings: "." empty, "c" confirmed tile, "d" tile
+   of the open turn that isn't confirmed yet. One image for assistive technology, not 225 cells.
+   Unconfirmed tiles are dashed and hollow as well as lighter, so colour is not the only cue. #}
+<svg class="board-preview" viewBox="0 0 15 15" role="img" aria-label="{{ g.summary }}"
+     xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <rect width="15" height="15" class="pv-frame"/>
+  {% for row in g.preview %}{% set r = loop.index0 %}{% for ch in row %}{% set c = loop.index0 %}
+  {% if ch == "c" %}<rect x="{{ c }}.06" y="{{ r }}.06" width=".88" height=".88" rx=".14" class="pv-tile"/>
+  {% elif ch == "d" %}<rect x="{{ c }}.12" y="{{ r }}.12" width=".76" height=".76" rx=".14" class="pv-draft"/>
+  {% elif bonus[r][c] %}<rect x="{{ c }}.1" y="{{ r }}.1" width=".8" height=".8" rx=".14" class="pv-{{ bonus[r][c] }}"/>
+  {% endif %}{% endfor %}{% endfor %}
+</svg>

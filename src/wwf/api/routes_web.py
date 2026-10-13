@@ -107,18 +107,49 @@ def home(request: Request) -> HTMLResponse:
     )
 
 
+def _preview_rows(g: Game) -> tuple[list[str], int, int]:
+    """The saved board for a thumbnail: 15 strings of "." empty, "c" confirmed tile, "d" tile of
+    the open turn that isn't confirmed yet. It is the board, not the latest picture, and never a
+    suggestion: a suggestion is only ever drawn when you choose it on the game page."""
+    rows, confirmed, draft = [], 0, 0
+    for r in range(BOARD_SIZE):
+        row = []
+        for c in range(BOARD_SIZE):
+            if g.board[r][c] is None:
+                row.append(".")
+            elif g.base_board[r][c] is not None:
+                row.append("c")
+                confirmed += 1
+            else:
+                row.append("d")
+                draft += 1
+        rows.append("".join(row))
+    return rows, confirmed, draft
+
+
 def _game_summary(g: Game) -> dict[str, Any]:
     scores = g.scores()
+    rows, confirmed, draft = _preview_rows(g)
+    if not g.started:
+        status = "Setting up"
+    else:
+        status = "Your turn" if g.phase == "my_turn" else "Opponent's turn"
+    tiles = f"{confirmed} confirmed tile{'s' if confirmed != 1 else ''}"
+    if draft:
+        tiles += f", {draft} not confirmed yet"
     return {
         "id": g.id,
         "name": g.name,
         "started": g.started,
         "phase": g.phase,
+        "status": status,
         "me": scores["me"],
         "opponent": scores["opponent"],
         "turns": sum(1 for t in g.turns if t.kind != "start"),
         "pictures": len(g.pictures),
         "updated": g.updated_at.replace("T", " ")[:16],
+        "preview": rows,
+        "summary": f"Board with {tiles}." if confirmed + draft else "Empty board.",
     }
 
 

@@ -143,3 +143,59 @@ def test_removed_pages_are_gone(client: TestClient) -> None:
     assert client.get("/fixtures").status_code == 404
     assert client.post("/api/v1/session").status_code in (404, 405)
     assert client.get("/api/v1/health").json()["status"] == "ok"
+
+
+# --- home: game cards ------------------------------------------------------------------------
+
+
+def test_home_shows_each_game_as_a_card_with_its_saved_board(
+    client: TestClient, services: Services
+) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "start_me"))
+    html = client.get("/").text
+    assert 'class="game-card' in html and f'href="/game/{gid}"' in html
+    assert "Continue game" in html and "Your turn" in html
+    assert "You <b>0</b>" in html and "Opponent <b>0</b>" in html
+    assert 'class="board-preview"' in html and "5 confirmed tiles" in html
+    # one image for assistive technology, not a tab stop or element per square
+    assert html.count('role="img"') == 1
+    assert html.index("New game") < html.index('class="game-cards"')  # beside the title
+
+
+def test_card_preview_follows_the_saved_board_and_marks_unconfirmed_tiles(
+    client: TestClient, services: Services
+) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "start_me"))
+    # a typed word is an open turn: on the board, not confirmed
+    client.post(
+        f"/game/{gid}/word",
+        data={"word": "HAT", "row": 8, "col": 6, "direction": "down", "player": "opponent"},
+    )
+    html = client.get("/").text
+    assert "not confirmed yet" in html
+    assert html.count('class="pv-draft"') > 0 and html.count('class="pv-tile"') == 5
+
+
+def test_a_suggestion_is_never_drawn_on_the_card(client: TestClient, services: Services) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "start_me"))
+    client.post(f"/game/{gid}/board", data=form({7: (5, "HELLO")}, "SATIRE?", "solve"))
+    assert services.game(gid).last_result is not None  # there are suggestions
+    html = client.get("/").text
+    assert html.count('class="pv-tile"') == 5 and 'class="pv-draft"' not in html
+
+
+def test_card_delete_names_the_game_and_rename_is_a_separate_form(client: TestClient) -> None:
+    gid = new_game(client)
+    client.post(f"/game/{gid}/rename", data={"name": "Sunday game"})
+    html = client.get("/").text
+    assert "Delete “Sunday game”" in html and 'data-confirm="Delete “Sunday game”' in html
+    assert f'action="/game/{gid}/rename"' in html and f'action="/game/{gid}/delete"' in html
+
+
+def test_home_without_games_still_starts_with_the_camera(client: TestClient) -> None:
+    html = client.get("/").text
+    assert "Start a game" in html and 'class="game-cards"' not in html
+    assert "Take a photo of the board" in html and "Enter board manually" in html
