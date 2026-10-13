@@ -406,3 +406,13 @@ fieldset.plain { border: 0; padding: 0; margin: 8px 0 0; min-width: 0; }
 
 .game-filter { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; }
 .game-filter input { flex: 1; max-width: 22rem; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+
+/* touch targets and narrow screens */
+button.link { min-height: 44px; padding: 10px 6px; }
+summary { min-height: 44px; padding-block: 10px; box-sizing: border-box; cursor: pointer; }
+.card-menu > summary, .new-game > summary { padding-block: 10px; }
+select, input[type=number], input[type=search], .inline-form input { min-height: 44px; }
+select { max-width: 100%; }
+.param select, .param input { width: 100%; max-width: 100%; }
+.card-menu-body input { max-width: 100%; min-width: 0; }
+.inline-form { flex-wrap: wrap; }

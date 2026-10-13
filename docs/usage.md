@@ -68,16 +68,20 @@ same thing: an **open turn**, which stays editable until you **confirm** it.
                -> fix anything that's wrong -> Confirm turn (locks it)
 ```
 
-**Home (`/`)** lists your games, newest first, with whose turn it is, the score and how many
-pictures each has; tap one to carry on, or **Delete** it. Start a new game by:
+**Games (`/`)** shows each game as a card: a thumbnail of its saved board (unconfirmed tiles are
+dashed), whether it is your turn or the opponent's, the score as *You* and *Opponent*, when it was
+last played, and **Continue game**. **More** on a card holds Rename and Delete (Delete names the
+game and asks first). With more than four games a filter box narrows them by name. **New game**
+beside the title offers:
 
 - **Take a photo of the board**, the main way. On a phone it opens the camera app; on a computer
   with a webcam it shows a live viewfinder (browsers only allow the webcam on `localhost` or
   `https`; elsewhere it opens a file picker).
-- **Upload a screenshot**: choose an existing image, or drop one onto the box.
-- **Type a board in by hand**: start from an empty board.
+- **Upload image**: choose an existing screenshot or photo, or drop one onto the box.
+- **Enter board manually**: start from an empty board.
 
-A picture is sent as soon as it's taken or chosen. The browser first scales it to at most 2000 px
+A chosen or captured picture is shown first with **Read the board** and **Choose another**:
+nothing is sent, and nothing changes, until you read it. The browser scales it to at most 2000 px
 on the long side, which keeps phone photos small and converts iPhone HEIC photos to JPEG.
 
 **The starting position.** A new game isn't tracked yet. The board is read from the picture (or
@@ -92,8 +96,8 @@ last confirmed turn so you can edit it and confirm again. Your **rack is always 
 
 **The game page**, from the top:
 
-1. **Scoreboard and turn**: your points, the opponent's, the tiles left in the bag, and a line
-   saying whose move is next. Points count turns confirmed here.
+1. **Header**: *Back to games*, the game's name (with Rename), the score, the tiles left in the
+   bag, and whose move is next. Points count turns confirmed here.
 2. **What this turn needs**:
    - *Starting position* (before the game is tracked): the two **Confirm** buttons.
    - *What did you draw?* on your turn when your rack isn't full. **Add and solve** goes on.
@@ -102,22 +106,36 @@ last confirmed turn so you can edit it and confirm again. Your **rack is always 
      **It was the other player's move**, **Cancel this turn** (board and rack go back to how the
      turn began) and **Just update the board**, which keeps the tiles without scoring them (a
      picture that caught up several turns; it shows in *Turns* as *Board updated*).
-3. **The board**: type into the squares. A letter fills the square and moves right; arrows move;
-   Backspace clears; **lowercase** marks a blank (on a phone, press **Blank**). Amber squares
-   are ones the reader isn't sure of. **Save** keeps your edits; **Save and solve** finds moves.
-4. **Best moves** (your turn): the ranked list. Tap one to preview it. **Play** puts it on the
-   board as the open turn and your rack becomes what you'd keep; nothing is logged until you
-   confirm, so you can still tweak it (say you played something slightly different).
-5. **Type a move**: a word, the row and column of its first letter (clicking a square fills them
-   in), across or down, and whose move it is. Write the whole word, including letters already on
-   the board; lowercase marks a blank. It goes on the board as the open turn. Use it for your own
-   move or the opponent's. If only the word list disagrees you're offered *confirm it even so*,
-   because the game itself accepted it; such turns are marked *not in list*.
-6. **Pictures**: **Take a picture** / **Upload instead**. Confirmed tiles are kept; new tiles
-   and your rack are read into the open turn (replacing any open tiles from an earlier picture).
-   The last four pictures of this game are shown under it.
-7. **Turns**: every confirmed turn with its words and points, the picture it came from, **Undo
-   last turn**, the unseen tiles, and **Delete this game**.
+3. **The board**, with row and column numbers along its edges. It is one tab stop: use the arrow
+   keys to move (Home and End jump along a row) and Tab to leave it. A letter fills the square and
+   moves right; Backspace clears; lowercase marks a blank (or press **Blank**). Amber squares are
+   ones the reader isn't sure of. **Larger board** (phones) makes the squares big enough to touch
+   precisely and scrolls inside the card; Escape leaves it. **Save** keeps your edits.
+4. **What to do next**, beside the board on a wide screen and above it on a phone:
+   **Find my best move**, **Record my move**, **Record opponent's move** and **Update from photo**.
+   The one that matches the turn is already showing.
+   - *Find my best move* lists the best five moves (**Show more** for the rest) with the tiles
+     each leaves you. Choosing one **previews it on the board** (dashed tiles, with its score);
+     nothing changes. **Record this move** places it and confirms it as your move in one step.
+   - *Record my move / Record opponent's move* is the move composer. Type the whole word
+     (including letters already on the board), tap a square or type the row and column of its
+     first letter, and choose **Across** or **Down**. The word is drawn on the board with its
+     score and any problem before anything is recorded: dashed tiles are new, underlined tiles
+     are ones it reuses. Mark a blank by tapping its letter under the word. **Record** places and
+     confirms it as exactly one turn for the player shown. If only the word list disagrees you're
+     offered *record it even so*, because the game itself accepted it; such turns are marked *not
+     in list*. A rejected move keeps what you typed and changes nothing.
+   - *Pass* is a separate button, worded for the player being recorded.
+5. **Pictures**: **Take a picture** / **Upload instead**, after the preview step. Confirmed tiles
+   are kept; new tiles and your rack are read into the open turn (replacing any open tiles from
+   an earlier picture). Squares the reader was unsure of are listed with an enlarged crop from the
+   picture. Pictures open in an in-app viewer with *Original* and *Straightened board*, a zoom,
+   and previous/next.
+6. **Turns**: every confirmed turn with who played it, its words and points, the totals after it
+   and the picture it came from. The starting position and board updates are marked *Setup* and
+   aren't numbered. **Undo the last turn** says what it will take back; it is different from
+   **Cancel this turn**, which discards tiles that were never confirmed. Also the unseen tiles and
+   **Delete this game**.
 
 A turn is either a suggestion you played, a typed word, or a picture. Only one is open at a time:
 confirm or cancel it before putting another on the board. A picture's new tiles must form one
@@ -126,21 +144,26 @@ board**.
 
 **Unseen tiles.** Everything not on the board or your rack: the opponent's rack plus the bag. If
 the board shows more of a letter than the game has, the page says so, because one of them is a
-blank that looks like a normal tile; type it in lowercase and the count comes right.
+blank that looks like a normal tile. The squares with those letters get a dotted edge: mark the
+blank with the **Blank** button and the count comes right. Nothing is changed for you.
 
 **Saving.** Every game is `data/games/<id>.json` plus a folder `data/games/<id>/` holding all its
 pictures. Games survive restarting the server and can last weeks. Set `WWF_GAMES_DIR` to keep
 them elsewhere. A game saved by an earlier version keeps its one picture, and a game that had
 turns but no confirmed starting position asks you to confirm it.
 
-**Options (`/options`)**: choose the solver, its parameters and the word list. Saving applies
-them to the game you came from (if any) and remembers them in a cookie for new games.
+**Settings (`/options`)**: *Maximum suggestions*, *Minimum score*, *Include blank tiles*, *Tie
+preference* and the *Word list*. The page says what a save applies to: the game you came from (if
+any) and games you start from now on; other games keep theirs. **Save and back to the game**
+returns with a confirmation. Changing anything clears the suggestions on screen, because they
+were found with the old settings. *Advanced* holds how moves are found, including engines that
+are planned but not available yet.
 
 Everything works without JavaScript except:
-- the grid's keyboard shortcuts and the Blank button
-- clicking a square to fill in the typed word's start
-- the webcam viewfinder, sending as soon as a picture is chosen, and downscaling
-- the big Play button staying in reach on a phone, and the delete confirmation
+- the live preview of a typed word (without it, **Check the word** draws it after a page load)
+- choosing a suggestion without a page load, the single board tab stop and the Larger board mode
+- the picture preview step, the webcam viewfinder and downscaling
+- the games filter, and the delete confirmation
 
 Without JavaScript, pick the picture and press the button that appears under it.
 
