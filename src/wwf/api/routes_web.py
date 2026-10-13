@@ -25,6 +25,7 @@ from wwf.api.schemas import BOARD_SIZE, MAX_RACK, BoardGrid, check_rack
 from wwf.api.services import ApiError, Services
 from wwf.api.session import Session
 from wwf.core.config import project_root
+from wwf.vision.perspective import warp_board_png
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
@@ -154,6 +155,7 @@ def _review(request: Request, s: Session, status: int = 200, **ctx: Any) -> HTML
     rack = list(s.rack) + [""] * (MAX_RACK - len(s.rack))
     ctx.setdefault("board", s.board)
     ctx.setdefault("rack", rack)
+    ctx.setdefault("board_image_url", _board_image_url(get_services(request), s))
     return _render(request, "review.html", status, session=s, recognition=rec,
                    needs_review=needs_review, **ctx)  # fmt: skip
 
@@ -200,9 +202,11 @@ async def review_submit(request: Request, session_id: str) -> Response:
     if errors:
         return _review(request, s, 422, board=board, rack=rack_cells, errors=errors)
     svc.set_board(s, board, rack)
-    if form.get("action") == "fixture" and svc.fixtures is not None and s.fixture_name:
+    if svc.fixtures is not None and s.fixture_name:
+        # labelling a fixture: every save writes the label file, so nothing typed is lost
         svc.fixtures.write_label(s.fixture_name, board, rack)
-        return _redirect(f"/fixtures?labelled={s.fixture_name}")
+        if form.get("action") != "solve":
+            return _redirect(f"/fixtures?labelled={s.fixture_name}")
     if form.get("action") == "save":
         return _redirect(f"/review/{s.id}?saved=1")
     if not rack:
@@ -393,7 +397,8 @@ def fixtures_page(request: Request, labelled: str | None = None) -> HTMLResponse
         fixtures=items,
         directory=_display_path(store.directory),
         labelled=labelled,
-        done=sum(f.labelled for f in items),
+        done=sum(f.status == "verified" for f in items),
+        drafts=sum(f.status == "draft" for f in items),
     )
 
 
@@ -404,6 +409,33 @@ def fixture_image(request: Request, name: str) -> Response:
     except FixtureError as e:
         raise ApiError(404, "fixture_not_found", str(e)) from None
     return Response(fixture.image.read_bytes(), media_type=fixture.content_type)
+
+
+@router.get("/fixtures/{name}/board.png", response_class=Response)
+def fixture_board(request: Request, name: str) -> Response:
+    """The board straightened with the label's board_quad, to check a label against."""
+    store = _fixtures(request)
+    try:
+        fixture = store.get(name)
+        quad = (store.read_label(name) or {}).get("board_quad")
+    except FixtureError as e:
+        raise ApiError(404, "fixture_not_found", str(e)) from None
+    if not isinstance(quad, list):
+        raise ApiError(404, "no_board_quad", name)
+    png = warp_board_png(fixture.image.read_bytes(), quad)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+def _board_image_url(svc: Services, s: Session) -> str | None:
+    if svc.fixtures is None or not s.fixture_name:
+        return None
+    try:
+        label = svc.fixtures.read_label(s.fixture_name)
+    except FixtureError:
+        return None
+    if label and isinstance(label.get("board_quad"), list):
+        return f"/fixtures/{s.fixture_name}/board.png"
+    return None
 
 
 @router.post("/fixtures/{name}/open")
@@ -422,4 +454,5 @@ def fixture_open(request: Request, name: str) -> Response:
     s.fixture_name = name
     if label is not None:
         s.board, s.rack = label
+    s.fixture_status = fixture.status
     return _redirect(f"/review/{s.id}")

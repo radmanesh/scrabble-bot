@@ -6,8 +6,15 @@
 
   {% if session.image %}
   <section class="shot card">
+    {% if board_image_url %}
+    <p class="small">Straightened board, to check square by square:</p>
+    <img class="board-shot" src="{{ board_image_url }}" alt="The board from the picture, straightened">
+    <details class="small"><summary>Original picture</summary>
+    {% endif %}
+    {% if recognition and recognition.geometry %}
     <input type="checkbox" id="show-overlay" class="overlay-toggle" checked>
     <label for="show-overlay" class="small">Show detected grid</label>
+    {% endif %}
     <div class="shot-frame">
       <img src="/api/v1/session/{{ session.id }}/image" alt="Uploaded screenshot">
       {% if recognition and recognition.geometry %}
@@ -18,6 +25,7 @@
       </svg>
       {% endif %}
     </div>
+    {% if board_image_url %}</details>{% endif %}
     {% if recognition and recognition.warnings %}
     <p class="hint">
       {% if "recognition_unavailable" in recognition.warnings %}
@@ -60,18 +68,25 @@
     </div>
     <p class="hint small">Use <span class="kbd">?</span> for a blank on your rack.</p>
 
-    <div class="actions">
-      <button type="button" id="blank-toggle" class="js-only" hidden>Blank</button>
-      <button type="submit" name="action" value="save">Save</button>
-      <button type="submit" name="action" value="solve" class="primary">Save and solve</button>
-    </div>
-    {% if fixtures_mode and session.fixture_name %}
+    {% set labelling = fixtures_mode and session.fixture_name %}
+    {% if labelling %}
     <div class="fixture-label">
-      <p class="small">Fixture <code>{{ session.fixture_name }}</code>: enter exactly what the picture
-        shows, including the rack, then save the label.</p>
-      <button type="submit" name="action" value="fixture" class="primary">Save label</button>
+      <p class="small">Labelling fixture <code>{{ session.fixture_name }}</code>. Enter exactly what
+        the picture shows, including the rack.
+        {% if session.fixture_status == "draft" %}<br><b>This board was filled in as a guess:</b>
+        check every square against the picture before saving.{% endif %}</p>
     </div>
     {% endif %}
+    <div class="actions">
+      <button type="button" id="blank-toggle" class="js-only" hidden>Blank</button>
+      {% if labelling %}
+      <button type="submit" name="action" value="fixture" class="primary">Save label</button>
+      <button type="submit" name="action" value="solve">Save label and solve</button>
+      {% else %}
+      <button type="submit" name="action" value="save">Save</button>
+      <button type="submit" name="action" value="solve" class="primary">Save and solve</button>
+      {% endif %}
+    </div>
     {% if request.query_params.get("saved") %}<p class="notice ok">Saved.</p>{% endif %}
   </form>
 

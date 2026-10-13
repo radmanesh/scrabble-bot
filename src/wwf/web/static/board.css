@@ -135,3 +135,6 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .fixture img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: var(--line); }
 .fixture p { margin: 2px 0 8px; }
 .fixture.labelled { opacity: 0.8; }
+.fixture .draft { color: var(--review); }
+.board-shot { display: block; width: 100%; max-width: 620px; aspect-ratio: 1; border-radius: 6px; margin-top: 6px; }
+.shot details { margin-top: 10px; }

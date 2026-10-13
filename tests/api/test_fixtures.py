@@ -59,7 +59,7 @@ def test_pictures_are_saved_and_listed(client: TestClient, fixtures_dir: Path) -
 
     page = client.get("/fixtures").text
     assert page.count('class="card fixture') == 3
-    assert "0 labelled" in page
+    assert "0 checked" in page
     assert (
         client.get(f"/fixtures/{photo}/image").content
         == (fixtures_dir / f"{photo}.jpg").read_bytes()
@@ -72,6 +72,7 @@ def test_label_round_trip(client: TestClient, fixtures_dir: Path) -> None:
     review = r.headers["location"]
     html = client.get(review).text
     assert "Save label" in html and name in html
+    assert 'value="save"' not in html  # one save path while labelling: no session-only Save
 
     form = {f"c-{r}-{c}": "" for r in range(15) for c in range(15)}
     for i, ch in enumerate("HELlO"):
@@ -83,10 +84,11 @@ def test_label_round_trip(client: TestClient, fixtures_dir: Path) -> None:
     label = json.loads((fixtures_dir / f"{name}.json").read_text())
     assert label["image"] == f"{name}.jpg"
     assert label["input_type"] == "photo"
+    assert label["status"] == "verified"
     assert label["board"][7] == ".....HELlO....."
     assert label["board"][0] == "." * 15
     assert label["rack"] == "AB?"
-    assert "1 labelled" in client.get("/fixtures").text
+    assert "1 checked" in client.get("/fixtures").text
 
     # reopening loads the saved label back into the grid
     review2 = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
@@ -107,3 +109,48 @@ def test_names_cannot_escape_the_folder(client: TestClient, tmp_path: Path) -> N
         with pytest.raises(FixtureError):
             store.get(bad)
     assert client.post("/fixtures/..%2Fx/open").status_code == 404
+
+
+def _form(rows: dict[int, tuple[int, str]], rack: str, action: str) -> dict[str, str]:
+    form = {f"c-{r}-{c}": "" for r in range(15) for c in range(15)}
+    for r, (c0, word) in rows.items():
+        for i, ch in enumerate(word):
+            form[f"c-{r}-{c0 + i}"] = ch
+    return form | {f"r-{i}": ch for i, ch in enumerate(rack)} | {"action": action}
+
+
+def test_draft_is_shown_then_verified_keeping_extra_fields(
+    client: TestClient, fixtures_dir: Path
+) -> None:
+    name = _upload(client, _image("JPEG"), "photo")
+    draft = {
+        "image": f"{name}.jpg", "input_type": "photo", "status": "draft",
+        "board": ["." * 15] * 7 + [".....HELLO....."] + ["." * 15] * 7, "rack": "AB",
+        "board_quad": [[1, 2], [3, 4], [5, 6], [7, 8]], "notes": "guessed",
+    }  # fmt: skip
+    (fixtures_dir / f"{name}.json").write_text(json.dumps(draft))
+    page = client.get("/fixtures").text
+    assert "draft: check it" in page and "Check draft" in page and "1 with a guessed draft" in page
+
+    review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
+    html = client.get(review).text
+    assert "filled in as a guess" in html
+    assert 'value="H"' in html  # the draft pre-fills the grid
+
+    client.post(review, data=_form({7: (5, "HELLS")}, "AB", "fixture"))
+    label = json.loads((fixtures_dir / f"{name}.json").read_text())
+    assert label["status"] == "verified"
+    assert label["board"][7] == ".....HELLS....."
+    assert label["board_quad"] == [[1, 2], [3, 4], [5, 6], [7, 8]]  # kept
+    assert "notes" not in label
+
+
+def test_save_and_solve_also_writes_the_label(client: TestClient, fixtures_dir: Path) -> None:
+    name = _upload(client, _image("JPEG"), "photo")
+    review = client.post(f"/fixtures/{name}/open", follow_redirects=False).headers["location"]
+    r = client.post(
+        review, data=_form({7: (5, "HELLO")}, "SATIRE", "solve"), follow_redirects=False
+    )
+    assert r.headers["location"].startswith("/results/")
+    label = json.loads((fixtures_dir / f"{name}.json").read_text())
+    assert label["board"][7] == ".....HELLO....." and label["rack"] == "SATIRE"

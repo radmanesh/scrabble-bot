@@ -122,11 +122,16 @@ uv run wwf-serve --collect-fixtures
    - Camera pictures are named `photo-<date>-<time>.jpg`. Uploaded PNGs count as screenshots
      (`screenshot-...png`); other uploads count as photos.
 2. **Label them.** On your computer, open **Fixtures** in the top bar (`/fixtures`).
-   - It lists every picture and whether it has a label yet.
-   - Press **Label** to open one in the review grid next to the picture.
-   - Type exactly what the picture shows: every tile on the board (lowercase for blanks) and the
+   - Each picture is shown as **checked**, **draft: check it** (a guessed label nobody has
+     confirmed), or **needs a label**.
+   - Press **Label** or **Check draft** to open it in the review grid. If the label records where
+     the board is in the photo, a straightened copy of the board is shown next to the grid.
+   - Type or correct exactly what the picture shows: every tile (lowercase for blanks) and the
      rack (`?` for a blank).
-   - Press **Save label**. That writes `<name>.json` next to the image. **Edit label** reopens it.
+   - Press **Save label**. That writes `<name>.json` next to the image and marks it checked.
+     **Save label and solve** also saves it. **Edit label** reopens a saved one.
+   - Board tiles in current WWF don't show point values, so a blank played earlier looks like a
+     normal tile. If you know one is there, type it in lowercase.
 3. **Prune.** Delete any picture you don't want straight from the folder.
 
 What to capture for the photo path. Variety matters more than count, and 20-40 labelled photos
@@ -146,13 +151,19 @@ The label format, if you ever write one by hand:
 {
   "image": "photo-20261012-203300.jpg",
   "input_type": "photo",
+  "status": "verified",
   "board": ["...............", "... 15 strings of 15 characters ..."],
   "rack": "AEIRS?T",
   "labelled_at": "2026-10-12T20:40:00"
 }
 ```
 
-Use `.` for an empty square, uppercase for a tile and lowercase for a blank. Add
+Use `.` for an empty square, uppercase for a tile and lowercase for a blank.
+- `status` is `draft` for an unchecked guess.
+- An optional `board_quad` gives the board's corners in the photo, in pixels, in the order
+  top-left, top-right, bottom-right, bottom-left.
+
+Add
 `--collect-fixtures some/other/folder` to save somewhere else.
 
 ## The HTTP API

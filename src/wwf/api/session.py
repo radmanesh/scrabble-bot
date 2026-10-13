@@ -32,6 +32,7 @@ class Session:
     corrected: bool = False
     last_result: SolveResponse | None = None
     fixture_name: str | None = None  # set when the picture is a fixture being collected or labelled
+    fixture_status: str = "none"  # the label's status when the fixture was opened
     last_access: float = field(default_factory=time.monotonic)
 
 

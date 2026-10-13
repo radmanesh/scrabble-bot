@@ -4,7 +4,8 @@
 {% block content %}
 <h1>Fixtures</h1>
 {% if labelled %}<p class="notice ok">Saved the label for <code>{{ labelled }}</code>.</p>{% endif %}
-<p class="hint">{{ fixtures | length }} pictures in <code>{{ directory }}</code>, {{ done }} labelled.
+<p class="hint">{{ fixtures | length }} pictures in <code>{{ directory }}</code>: {{ done }} checked,
+  {{ drafts }} with a guessed draft, {{ fixtures | length - done - drafts }} with no label.
   Open one to type in the true board and rack, then press <b>Save label</b>. Pictures you don't
   want can simply be deleted from that folder.</p>
 
@@ -18,10 +19,12 @@
     <div>
       <code class="small">{{ f.name }}</code>
       <p class="small">{{ f.input_type }} ·
-        {% if f.labelled %}<span class="ok">labelled</span>{% else %}<b>needs a label</b>{% endif %}</p>
+        {% if f.status == "verified" %}<span class="ok">checked</span>
+        {% elif f.status == "draft" %}<b class="draft">draft: check it</b>
+        {% else %}<b>needs a label</b>{% endif %}</p>
       <form action="/fixtures/{{ f.name }}/open" method="post">
         <button type="submit"{% if not f.labelled %} class="primary"{% endif %}>
-          {{ "Edit label" if f.labelled else "Label" }}</button>
+          {{ "Edit label" if f.labelled else "Check draft" if f.status == "draft" else "Label" }}</button>
       </form>
     </div>
   </li>

@@ -4,10 +4,13 @@ A fixture is an image plus a JSON label with the true board and rack, side by si
 assets/fixtures/ (the vision tests read them from there):
 
     photo-20261012-201500.jpg
-    photo-20261012-201500.json   {"image": ..., "input_type": "photo", "board": [15 row strings],
-                                  "rack": "AB?", "labelled_at": ...}
+    photo-20261012-201500.json   {"image": ..., "input_type": "photo", "status": "verified",
+                                  "board": [15 row strings], "rack": "AB?", "labelled_at": ...}
 
 Board rows use "." for an empty square, uppercase for a tile and lowercase for a blank.
+`status` is "draft" for a guessed label nobody has checked yet and "verified" once a person has
+saved it from the review grid. A label may also carry "board_quad": the board's four corners in
+image pixels (top-left, top-right, bottom-right, bottom-left), ground truth for grid detection.
 """
 
 from __future__ import annotations
@@ -41,7 +44,11 @@ class Fixture:
     name: str
     image: Path
     input_type: str
-    labelled: bool
+    status: Literal["none", "draft", "verified"]
+
+    @property
+    def labelled(self) -> bool:
+        return self.status == "verified"
 
     @property
     def content_type(self) -> str:
@@ -90,8 +97,10 @@ class FixtureStore:
         if image is None:
             raise FixtureError(f"no fixture image named {name!r}")
         label = self.read_label(name)
-        input_type = str(label.get("input_type")) if label else _guess_type(name)
-        return Fixture(name, image, input_type, label is not None)
+        if label is None:
+            return Fixture(name, image, _guess_type(name), "none")
+        status = "draft" if label.get("status") == "draft" else "verified"
+        return Fixture(name, image, str(label.get("input_type", _guess_type(name))), status)
 
     def list(self) -> list[Fixture]:
         if not self.directory.is_dir():
@@ -121,11 +130,15 @@ class FixtureStore:
         return rows_to_grid([str(r) for r in rows]), str(label.get("rack", ""))
 
     def write_label(self, name: str, grid: BoardGrid, rack: str) -> Path:
+        """Save a person-checked label. Extra fields already in the file (board_quad) are kept."""
         fixture = self.get(name)
         path = self.directory / f"{name}.json"
-        label = {
+        label = dict(self.read_label(name) or {})
+        label.pop("notes", None)  # draft notes no longer apply
+        label |= {
             "image": fixture.image.name,
             "input_type": fixture.input_type,
+            "status": "verified",
             "board": grid_to_rows(grid),
             "rack": rack,
             "labelled_at": datetime.now().isoformat(timespec="seconds"),
