@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import gc
 import hashlib
+import json
+import os
 import pickle
+import threading
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 CACHE_VERSION = 2
 
@@ -103,3 +107,110 @@ def _load(path: Path, cache_dir: Path | None) -> TrieDictionary:
             pickle.dump(dictionary, f, protocol=pickle.HIGHEST_PROTOCOL)
         tmp.replace(cache_path)
     return dictionary
+
+
+# --- choosing between word lists ------------------------------------------------------------
+
+
+class DictionaryError(ValueError):
+    """config/dictionaries.json is malformed or names a missing file."""
+
+
+@dataclass(frozen=True)
+class DictionaryInfo:
+    id: str
+    label: str
+    description: str
+    path: Path
+
+
+class DictionaryRegistry:
+    """The word lists the user can choose from, loaded lazily and kept once loaded.
+
+    Entries come from config/dictionaries.json; any other *.txt file in the dictionaries folder
+    is offered too, under its file stem, so dropping in a word list is enough to make it
+    selectable. The WWF_DICTIONARY environment variable overrides the configured default.
+    """
+
+    def __init__(
+        self,
+        infos: list[DictionaryInfo],
+        default_id: str,
+        cache_dir: Path | None = None,
+    ) -> None:
+        self._infos = {i.id: i for i in infos}
+        if default_id not in self._infos:
+            raise DictionaryError(
+                f"default dictionary {default_id!r} is not available (have {sorted(self._infos)})"
+            )
+        self.default_id = default_id
+        self._cache_dir = cache_dir
+        self._loaded: dict[str, TrieDictionary] = {}
+        self._lock = threading.Lock()
+
+    def infos(self) -> list[DictionaryInfo]:
+        return list(self._infos.values())
+
+    def info(self, dictionary_id: str) -> DictionaryInfo:
+        return self._infos[dictionary_id]
+
+    def is_loaded(self, dictionary_id: str) -> bool:
+        return dictionary_id in self._loaded
+
+    def get(self, dictionary_id: str | None = None) -> TrieDictionary:
+        """The dictionary with this id (the default if None). KeyError for unknown ids."""
+        did = dictionary_id or self.default_id
+        info = self._infos[did]
+        with self._lock:
+            if did not in self._loaded:
+                self._loaded[did] = load_dictionary(info.path, self._cache_dir)
+            return self._loaded[did]
+
+
+def load_dictionary_registry(
+    config_path: Path, dictionaries_dir: Path, cache_dir: Path | None = None
+) -> DictionaryRegistry:
+    data: dict[str, Any] = {}
+    if config_path.exists():
+        with config_path.open() as f:
+            data = json.load(f)
+
+    infos: list[DictionaryInfo] = []
+    listed_files: set[str] = set()
+    for entry in data.get("dictionaries", []):
+        if "id" not in entry or "file" not in entry:
+            raise DictionaryError(f"dictionary entry needs 'id' and 'file': {entry}")
+        path = dictionaries_dir / str(entry["file"])
+        if not path.is_file():
+            raise DictionaryError(f"dictionary {entry['id']!r}: file {path} not found")
+        if any(i.id == entry["id"] for i in infos):
+            raise DictionaryError(f"dictionary id {entry['id']!r} listed twice")
+        listed_files.add(path.name)
+        infos.append(
+            DictionaryInfo(
+                id=str(entry["id"]),
+                label=str(entry.get("label", entry["id"])),
+                description=str(entry.get("description", "")),
+                path=path,
+            )
+        )
+    taken = {i.id for i in infos}
+    for path in sorted(dictionaries_dir.glob("*.txt")):
+        if path.name in listed_files or path.stem in taken:
+            continue
+        infos.append(DictionaryInfo(path.stem, path.name, "Unlisted word list", path))
+        taken.add(path.stem)
+
+    if not infos:
+        raise DictionaryError(f"no word lists found in {dictionaries_dir}")
+    default_id = os.environ.get("WWF_DICTIONARY") or str(data.get("default", infos[0].id))
+    return DictionaryRegistry(infos, default_id, cache_dir)
+
+
+def default_dictionary_registry() -> DictionaryRegistry:
+    """Registry built from config/dictionaries.json and assets/dictionaries/."""
+    from wwf.core.config import cache_dir, config_dir, dictionaries_dir
+
+    return load_dictionary_registry(
+        config_dir() / "dictionaries.json", dictionaries_dir(), cache_dir()
+    )

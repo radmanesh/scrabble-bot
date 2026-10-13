@@ -1,0 +1,17 @@
+{
+  "default": "enable1",
+  "dictionaries": [
+    {
+      "id": "enable1",
+      "file": "enable1.txt",
+      "label": "ENABLE1",
+      "description": "Public-domain word list (~173k words). No QI or ZA."
+    },
+    {
+      "id": "words",
+      "file": "words.txt",
+      "label": "words.txt",
+      "description": "Alternative word list (~194k entries). Includes QI."
+    }
+  ]
+}

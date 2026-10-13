@@ -17,6 +17,13 @@ Config lives in `config/` (board layout, letter values, solver registry); the de
 `assets/dictionaries/enable1.txt`. The trie is cached in `.cache/` keyed by the word list's hash.
 Set `WWF_ROOT` to point at a different directory holding `config/` and `assets/`.
 
+**Choosing a dictionary.** `config/dictionaries.json` lists the selectable word lists and the
+default (`enable1`; `words` is the alternative `words.txt`). Any other `.txt` file dropped into
+`assets/dictionaries/` is offered automatically under its file name. Set `WWF_DICTIONARY=words`
+to change the default without editing config. In code, `default_dictionary_registry().get(id)`
+returns the chosen dictionary (loaded on first use, then cached); the API (M5) will take a
+`dictionary_id` alongside `solver_id`, and the Options page (M6) will show it as a dropdown.
+
 **Dictionary caveat.** The WWF dictionary is proprietary. ENABLE1 is the public default and will
 occasionally accept a word WWF rejects, or the reverse (ENABLE1 has no `QI` or `ZA`, for
 example). Any newline-separated word list can be swapped in.

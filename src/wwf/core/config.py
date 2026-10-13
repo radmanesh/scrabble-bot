@@ -31,6 +31,14 @@ def assets_dir() -> Path:
     return project_root() / "assets"
 
 
+def dictionaries_dir() -> Path:
+    return assets_dir() / "dictionaries"
+
+
+def cache_dir() -> Path:
+    return project_root() / ".cache"
+
+
 @dataclass(frozen=True)
 class BoardConfig:
     name: str
