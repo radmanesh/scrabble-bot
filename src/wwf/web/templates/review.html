@@ -68,10 +68,22 @@
     {% if request.query_params.get("saved") %}<p class="notice ok">Saved.</p>{% endif %}
   </form>
 
-  <form class="card inline" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
-    <p>Retook the screenshot?</p>
-    <input type="file" name="image" accept="image/*" capture="environment" required>
-    <button type="submit">Re-run recognition</button>
-  </form>
+  <section class="card inline retake">
+    <p>Board not right? Take a new picture.</p>
+    <form class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
+      <label class="button primary"><span aria-hidden="true">📷</span> Retake photo
+        <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
+      </label>
+      <noscript><button type="submit">Re-run recognition</button></noscript>
+    </form>
+    <form class="image-form" action="/review/{{ session.id }}/image" method="post" enctype="multipart/form-data">
+      <label class="button">Upload instead
+        <input type="file" name="image" accept="image/*" class="file-hidden" required>
+      </label>
+      <noscript><button type="submit">Upload</button></noscript>
+    </form>
+    <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
+  </section>
+  <div class="notice error" id="send-error" role="alert" hidden></div>
 </div>
 {% endblock %}

@@ -25,10 +25,25 @@ def _board_form(rows: dict[int, tuple[int, str]], rack: str) -> dict[str, str]:
     return form
 
 
-def test_upload_page(client: TestClient) -> None:
+def test_upload_page_puts_the_camera_first(client: TestClient) -> None:
     html = client.get("/").text
-    assert 'accept="image/*"' in html and 'capture="environment"' in html
+    camera = html.index('capture="environment"')
+    upload = html.index('id="file-form"')
+    assert camera < upload, "the camera must come before the file upload"
+    assert html.count('name="image"') == 2
+    # the upload input must not force the camera
+    file_form = html[upload : html.index("</form>", upload)]
+    assert 'accept="image/*"' in file_form and "capture" not in file_form
+    assert 'id="viewfinder"' in html and 'action="/new"' in html
     assert "/static/htmx.min.js" in html
+
+
+def test_review_offers_retake_then_upload(client: TestClient) -> None:
+    sid = _new_review(client)
+    html = client.get(f"/review/{sid}").text
+    retake = html.index("Retake photo")
+    assert html.index('capture="environment"') < html.index("Upload instead")
+    assert retake < html.index("Upload instead")
 
 
 def test_upload_redirects_to_review(client: TestClient, png_bytes: bytes) -> None:

@@ -28,7 +28,7 @@ fieldset.card { min-width: 0; }
 legend { font-weight: 600; padding: 0 4px; }
 
 button, .button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; text-decoration: none; display: inline-block; min-height: 44px; }
-button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.primary, .button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
 .actions form { margin: 0; }
 input, select { font: inherit; color: var(--ink); background: var(--card); }
@@ -45,10 +45,21 @@ input[type=number], select { padding: 8px; border: 1px solid var(--line); border
 .no-js .js-only, .js-only[hidden] { display: none; }
 
 /* upload */
-.dropzone { display: block; border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; margin-bottom: 12px; cursor: pointer; }
+.file-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+.button.big, button.big { width: 100%; padding: 18px 16px; font-size: 1.15rem; text-align: center; }
+.camera-button { position: relative; }
+.capture-card .hint { text-align: center; }
+.viewfinder video { width: 100%; max-height: 60vh; background: #000; border-radius: 10px; display: block; }
+.viewfinder .actions { justify-content: center; }
+.viewfinder .actions .big { width: auto; flex: 1 1 auto; }
+.secondary-card { display: grid; gap: 10px; }
+.dropzone { display: block; position: relative; border: 2px dashed var(--line); border-radius: 12px; padding: 18px 16px; text-align: center; cursor: pointer; }
 .dropzone.drag { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.dropzone input { display: block; margin: 0 auto 10px; max-width: 100%; }
-.progress { color: var(--accent); font-weight: 600; }
+.inline-link { margin: 0; text-align: center; }
+button.link { border: 0; background: none; color: var(--accent); text-decoration: underline; min-height: 0; padding: 4px; }
+.progress { color: var(--accent); font-weight: 600; text-align: center; }
+.retake form { margin: 0; }
+.retake label { position: relative; }
 #recent-list { margin: 0; padding-left: 1.2em; }
 
 /* board */
@@ -109,3 +120,4 @@ dl.kv dd { margin: 0; font-family: ui-monospace, Menlo, monospace; }
 .params { display: grid; gap: 10px; margin: 8px 0 0 26px; }
 .param label { display: block; font-weight: 500; }
 .solver:not(:has(input[type=radio]:checked)) .params { display: none; }
+.busy { pointer-events: none; opacity: 0.6; }

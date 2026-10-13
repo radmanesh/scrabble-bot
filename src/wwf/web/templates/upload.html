@@ -4,24 +4,49 @@
 <h1>Solve a board</h1>
 
 {% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+<div class="notice error" id="send-error" role="alert" hidden></div>
 
-<form id="upload-form" class="card" action="/upload" method="post" enctype="multipart/form-data">
-  <label class="dropzone" id="dropzone">
-    <input type="file" name="image" accept="image/*" capture="environment" required>
-    <span class="dropzone-text">Take a photo or choose a screenshot<br><small>or drop an image here</small></span>
-  </label>
-  <button type="submit" class="primary">Read board</button>
-  <p class="progress" id="upload-progress" hidden>Reading the board…</p>
-  {% if not model_loaded %}
-  <p class="hint">Board recognition isn't built yet: the image is kept for reference and you
-    type the board in on the next page.</p>
-  {% endif %}
-</form>
+{# Main way in: the camera. On phones the capture attribute opens the camera app directly. #}
+<section class="card capture-card">
+  <form id="camera-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
+    <label class="button primary big camera-button" id="camera-button">
+      <span aria-hidden="true">📷</span> Take a photo of the board
+      <input type="file" name="image" accept="image/*" capture="environment" class="file-hidden" required>
+    </label>
+    <noscript><button type="submit">Read board</button></noscript>
+  </form>
 
-<form action="/new" method="post" class="card inline">
-  <p>No screenshot handy?</p>
-  <button type="submit">Type a board in</button>
-</form>
+  {# In-page viewfinder, for computers with a webcam (app.js shows it when the browser allows). #}
+  <div id="viewfinder" class="viewfinder" hidden>
+    <video id="viewfinder-video" playsinline muted autoplay></video>
+    <div class="actions">
+      <button type="button" id="shutter" class="primary big">Capture</button>
+      <button type="button" id="viewfinder-cancel">Cancel</button>
+    </div>
+  </div>
+
+  <p class="hint small">Fit the whole board and your rack in the frame, straight on, without glare.</p>
+  <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
+</section>
+
+{# Second way in: an existing screenshot or photo from the device. #}
+<section class="card secondary-card">
+  <form id="file-form" class="image-form" action="/upload" method="post" enctype="multipart/form-data">
+    <label class="dropzone" id="dropzone">
+      <input type="file" name="image" accept="image/*" class="file-hidden" required>
+      <span class="dropzone-text">Or upload a screenshot<br><small>choose a file, or drop one here</small></span>
+    </label>
+    <noscript><button type="submit">Upload</button></noscript>
+  </form>
+  <form action="/new" method="post" class="inline-link">
+    <button type="submit" class="link">Type a board in by hand</button>
+  </form>
+</section>
+
+{% if not model_loaded %}
+<p class="hint small">Board recognition isn't built yet: the picture is kept for reference and you
+  type the board in on the next page.</p>
+{% endif %}
 
 <section id="recent" class="card" hidden>
   <h2>Recent boards</h2>

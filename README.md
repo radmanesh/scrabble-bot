@@ -99,3 +99,10 @@ Verification: tests in `tests/api` cover the API and drive the pages as a no-JS 
 review grid's keyboard flow was checked by driving headless Chrome, and the layouts were checked
 by screenshot at 390 px and 1280 px. Not yet verified on a real phone or against a Docker build.
 
+**Camera first.** The upload page leads with **Take a photo of the board**. On phones that opens
+the camera app (`capture="environment"`); on computers with a webcam it opens an in-page
+viewfinder, where the browser allows it (localhost or https). Uploading a screenshot and typing a
+board in are the second and third options. Pictures are scaled in the browser to 2000 px on the
+long side before upload, and the Review page offers **Retake photo** before **Upload instead**.
+Checked in headless Chrome with a fake webcam and with phone touch emulation.
+

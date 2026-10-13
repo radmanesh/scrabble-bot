@@ -59,8 +59,17 @@ Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't su
 
 ### Using it
 
-1. **Upload** (`/`): pick a screenshot (on a phone this offers the camera), or press **Type a
-   board in** to start from an empty board. The last three boards you opened are listed as links.
+1. **Upload** (`/`): there are three ways in, in this order.
+   - **Take a photo of the board** is the main one:
+     - On a phone it opens the camera app directly.
+     - On a computer with a webcam it shows a live viewfinder; press **Capture**. Browsers only
+       allow the webcam on `localhost` or `https`; elsewhere the button opens a file picker.
+   - **Or upload a screenshot**: choose an existing image, or drop one onto the box.
+   - **Type a board in by hand**: start from an empty board.
+
+   The picture is sent as soon as it's taken or chosen, with no extra button. The browser first
+   scales it to at most 2000 px on the long side, which keeps phone photos small and converts
+   iPhone HEIC photos to JPEG. The last three boards you opened are listed as links.
 2. **Review** (`/review/<id>`): the uploaded image is shown next to an editable 15x15 grid. Click
    or tap a square and type.
    - Typing a letter fills the square and moves right.
@@ -70,7 +79,7 @@ Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't su
      to toggle the last square between tile and blank.
    - Enter up to 7 rack tiles below the board, using `?` for a blank.
    - **Save and solve** saves the board and opens the results; **Save** only saves.
-   - **Re-run recognition** replaces the board with a fresh upload.
+   - **Retake photo** (or **Upload instead**) replaces the board with a new picture.
 3. **Results** (`/results/<id>`): the ranked moves with score, start square (row, column,
    counting from 1), direction and leave. Click a move to see the board after playing it, with the
    new tiles outlined and the score of each word formed. The top shows which solver ran, how long
@@ -78,8 +87,14 @@ Stop it with Ctrl+C. The server keeps everything in memory, so sessions don't su
 4. **Options** (`/options`): choose the solver, its parameters and the word list. Saving applies
    them to the board you came from (if any) and remembers them in a cookie for new boards.
 
-Sessions expire after 30 minutes without use. Everything works without JavaScript except the
-grid's keyboard shortcuts, the Blank button and the recent-boards list.
+Sessions expire after 30 minutes without use.
+
+Everything works without JavaScript except:
+- the review grid's keyboard shortcuts and the Blank button
+- the webcam viewfinder, sending as soon as a picture is chosen, and downscaling
+- the recent-boards list
+
+Without JavaScript, pick the picture and press the button that appears under it.
 
 ## The HTTP API
 

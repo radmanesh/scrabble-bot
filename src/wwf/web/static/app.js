@@ -13,18 +13,66 @@
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage blocked */ }
   }
 
+  // --- sending pictures ----------------------------------------------------------------------
+  // Pictures are scaled so the long side is at most 2000 px before upload: camera photos stay far
+  // under the 10 MB limit, and formats the server can't read (iPhone HEIC) become JPEG.
+  const MAX_SIDE = 2000;
+
+  async function prepareImage(blob) {
+    try {
+      const bitmap = await createImageBitmap(blob); // applies EXIF orientation
+      const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+      const keep = scale === 1 && /^image\/(png|jpeg)$/.test(blob.type) && blob.size < 8e6;
+      if (keep) return blob;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const type = blob.type === "image/png" ? "image/png" : "image/jpeg"; // keep screenshots crisp
+      return await new Promise((ok) => canvas.toBlob((b) => ok(b || blob), type, 0.92));
+    } catch (e) {
+      return blob; // the browser can't decode it either: let the server report the problem
+    }
+  }
+
+  async function sendImage(action, blob) {
+    const progress = document.getElementById("send-progress");
+    const error = document.getElementById("send-error");
+    if (progress) progress.hidden = false;
+    if (error) error.hidden = true;
+    document.querySelectorAll(".image-form, #camera-button").forEach((el) => el.classList.add("busy"));
+    try {
+      const image = await prepareImage(blob);
+      const body = new FormData();
+      body.append("image", image, image.type === "image/png" ? "board.png" : "board.jpg");
+      const res = await fetch(action, { method: "POST", body: body });
+      if (res.ok && res.redirected) { window.location.href = res.url; return; }
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      const msg = doc.querySelector(".notice.error");
+      throw new Error(msg ? msg.textContent.trim() : "Upload failed (" + res.status + ").");
+    } catch (e) {
+      if (error) { error.textContent = e.message; error.hidden = false; }
+      if (progress) progress.hidden = true;
+      document.querySelectorAll(".busy").forEach((el) => el.classList.remove("busy"));
+    }
+  }
+
+  // Any picture form sends as soon as a file is chosen or a photo taken: no extra tap.
+  function initImageForms() {
+    document.querySelectorAll("form.image-form").forEach((form) => {
+      const input = form.querySelector("input[type=file]");
+      input.addEventListener("change", () => {
+        if (input.files.length) sendImage(form.action, input.files[0]);
+        input.value = "";
+      });
+    });
+  }
+
   // --- upload page ---------------------------------------------------------------------------
   function initUpload() {
-    const form = document.getElementById("upload-form");
-    if (!form) return;
     const zone = document.getElementById("dropzone");
-    const input = form.querySelector("input[type=file]");
-    const progress = document.getElementById("upload-progress");
-    const text = zone.querySelector(".dropzone-text");
-
-    input.addEventListener("change", () => {
-      if (input.files.length) text.textContent = input.files[0].name;
-    });
+    if (!zone) return;
+    const fileForm = document.getElementById("file-form");
     ["dragenter", "dragover"].forEach((ev) => zone.addEventListener(ev, (e) => {
       e.preventDefault(); zone.classList.add("drag");
     }));
@@ -32,15 +80,9 @@
       e.preventDefault(); zone.classList.remove("drag");
     }));
     zone.addEventListener("drop", (e) => {
-      if (e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        input.dispatchEvent(new Event("change"));
-      }
+      if (e.dataTransfer.files.length) sendImage(fileForm.action, e.dataTransfer.files[0]);
     });
-    form.addEventListener("submit", () => {
-      progress.hidden = false;
-      form.querySelector("button[type=submit]").disabled = true;
-    });
+    initViewfinder();
 
     const recent = readJSON(RECENT_KEY, []);
     if (recent.length) {
@@ -55,6 +97,50 @@
       });
       document.getElementById("recent").hidden = false;
     }
+  }
+
+  // On a computer, the capture attribute does nothing, so show a live webcam viewfinder instead.
+  // Phones keep the native camera app, which takes sharper pictures. Browsers only allow this on
+  // https or localhost; elsewhere the button falls back to the file picker.
+  async function initViewfinder() {
+    const media = navigator.mediaDevices;
+    if (!media || !media.getUserMedia || matchMedia("(pointer: coarse)").matches) return;
+    let devices = [];
+    try { devices = await media.enumerateDevices(); } catch (e) { return; }
+    if (!devices.some((d) => d.kind === "videoinput")) return;
+
+    const button = document.getElementById("camera-button");
+    const input = button.querySelector("input");
+    const finder = document.getElementById("viewfinder");
+    const video = document.getElementById("viewfinder-video");
+    const form = document.getElementById("camera-form");
+    let stream = null;
+    const stop = () => {
+      if (stream) stream.getTracks().forEach((t) => t.stop());
+      stream = null; finder.hidden = true; form.hidden = false;
+    };
+
+    button.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        stream = await media.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        });
+      } catch (err) {
+        input.click(); // camera refused or busy: choose a file instead
+        return;
+      }
+      video.srcObject = stream;
+      form.hidden = true; finder.hidden = false;
+    });
+    document.getElementById("viewfinder-cancel").addEventListener("click", stop);
+    document.getElementById("shutter").addEventListener("click", () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      stop();
+      canvas.toBlob((blob) => blob && sendImage(form.action, blob), "image/jpeg", 0.92);
+    });
   }
 
   function rememberSession(id) {
@@ -195,6 +281,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    initImageForms();
     initUpload();
     initReview();
     initResults();
