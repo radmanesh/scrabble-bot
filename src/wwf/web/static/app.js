@@ -616,6 +616,41 @@
     });
   }
 
+  // --- games page: filter by name -----------------------------------------------------------
+  function initGameFilter() {
+    const input = document.getElementById("game-filter");
+    if (!input) return;
+    input.closest(".game-filter").hidden = false;
+    const cards = Array.from(document.querySelectorAll(".game-card"));
+    const count = document.getElementById("game-filter-count");
+    const none = document.getElementById("no-match");
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      let shown = 0;
+      cards.forEach((c) => {
+        const on = !q || c.dataset.name.includes(q);
+        c.hidden = !on; shown += on ? 1 : 0;
+      });
+      count.textContent = q ? `${shown} of ${cards.length} games` : "";
+      none.hidden = shown !== 0;
+    });
+  }
+
+  // --- finding moves can take a few seconds: say so and don't let it be sent twice ------------
+  function initBusyForms() {
+    document.querySelectorAll("form").forEach((form) => {
+      form.addEventListener("submit", (e) => {
+        const btn = e.submitter;
+        const solving = btn && btn.value === "solve" || /\/solve$/.test(form.action);
+        if (!solving || form.dataset.busy) return;
+        form.dataset.busy = "1";
+        const note = document.getElementById("solve-progress");
+        if (note) note.hidden = false;
+        setTimeout(() => { if (btn) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = "Finding moves…"; } }, 0);
+      });
+    });
+  }
+
   // Forms that destroy something ask first (data-confirm="question").
   function initConfirms() {
     document.querySelectorAll("form[data-confirm]").forEach((form) => {
@@ -627,6 +662,8 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     initConfirms();
+    initGameFilter();
+    initBusyForms();
     initImageForms();
     initImportPreview();
     initViewfinder();

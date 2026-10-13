@@ -18,9 +18,17 @@
   </details>
 </div>
 
+{% if games | length > 4 %}
+<p class="game-filter js-only" hidden>
+  <label for="game-filter" class="sr-only">Filter games by name</label>
+  <input id="game-filter" type="search" placeholder="Filter games by name" autocomplete="off">
+  <span id="game-filter-count" class="hint small" role="status"></span>
+</p>
+{% endif %}
+<p id="no-match" class="hint" hidden>No game has that name.</p>
 <ul class="game-cards">
   {% for g in games %}
-  <li class="game-card card">
+  <li class="game-card card" data-name="{{ g.name | lower }}">
     <div class="card-board">{% include "_board_preview.html" %}</div>
     <div class="card-body">
       <h2 class="game-name">{{ g.name }}</h2>

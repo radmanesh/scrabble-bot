@@ -579,10 +579,7 @@ def test_choosing_a_picture_is_staged_before_it_is_read(client: TestClient) -> N
     assert "nothing is saved until then" in home.lower()
     gid = new_game(client)
     page = client.get(f"/game/{gid}").text
-    assert (
-        'id="import-preview"' in page
-        and "If the picture can't be used, nothing changes" in page
-    )
+    assert 'id="import-preview"' in page and "If the picture can't be used, nothing changes" in page
 
 
 def test_unsure_squares_are_listed_with_an_enlarged_picture_of_each(
