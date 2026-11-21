@@ -441,7 +441,7 @@ def confirm_turn(svc: Services, game: Game, player: Player, force: bool = False)
         # The user vouches for these words: remember them in the word list for next time.
         svc.dictionaries.learn(
             game.dictionary_id,
-            (v[len(DICTIONARY_PREFIX):] for v in analysis.violations),
+            (v[len(DICTIONARY_PREFIX) :] for v in analysis.violations),
         )
     turn = Turn(
         n=len(game.turns) + 1,
