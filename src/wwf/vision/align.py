@@ -26,7 +26,7 @@ def refine_alignment(
     fit: BoardFit,
     cfg: BoardConfig,
     occupancy: OccupancyModel,
-    iterations: int = 2,
+    iterations: int = 4,  # stops early once a pass changes almost nothing
 ) -> BoardFit:
     for _ in range(iterations):
         board = board_image(bgr, fit)

@@ -6,15 +6,20 @@ have yet. Fonts that aren't installed are skipped, so this is a no-op on machine
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from wwf.core.config import assets_dir
 from wwf.vision.reader import CELL, LETTERS
 
+# Shipped with the repo (assets/fonts, DejaVu licence), so the same letters can be drawn anywhere.
+BUNDLED_FONTS = [(str(assets_dir() / "fonts" / "DejaVuSans-Bold.ttf"), 0)]
 FONT_CANDIDATES = [
+    *BUNDLED_FONTS,
     ("/System/Library/Fonts/SFNSRounded.ttf", 0),
     ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0),
     ("/System/Library/Fonts/Helvetica.ttc", 1),  # bold face
@@ -27,7 +32,12 @@ LETTER_GREYS = [70, 95, 120]
 
 
 def available_fonts() -> list[tuple[str, int]]:
-    return [(p, i) for p, i in FONT_CANDIDATES if Path(p).exists()]
+    """Fonts to draw letters with: the bundled one first, then any system fonts present.
+
+    With WWF_BUNDLED_FONTS_ONLY=1 (the tests set it) only the bundled fonts are used, so results
+    do not depend on what the machine has installed."""
+    candidates = BUNDLED_FONTS if os.environ.get("WWF_BUNDLED_FONTS_ONLY") else FONT_CANDIDATES
+    return [(p, i) for p, i in candidates if Path(p).exists()]
 
 
 def render_tile(letter: str, font_path: str, index: int, bg: tuple[int, int, int],

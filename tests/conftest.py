@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,9 @@ from wwf.core.board import Board, Tile
 from wwf.core.config import BoardConfig, assets_dir, load_board_config, project_root
 from wwf.core.dictionary import TrieDictionary, load_dictionary
 from wwf.core.move import Move, Placement, build_move
+
+# Letters in the vision tests are drawn from the bundled font only: same result on every machine.
+os.environ.setdefault("WWF_BUNDLED_FONTS_ONLY", "1")
 
 
 @pytest.fixture(scope="session")
