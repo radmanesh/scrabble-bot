@@ -155,6 +155,7 @@ def read_image(
 
     # choose among the candidate positions: with a board on file, the one that agrees with it
     best = None
+    first = None  # the best-fitting position on geometry alone
     for fit in fits[:5]:
         crop_board = board_image(bgr, fit)
         inside = visible_mask(bgr.shape, fit.homography)
@@ -164,11 +165,17 @@ def read_image(
             if use_previous
             else 0.0
         )
+        if first is None:
+            first = (score, fit, crop_board, m)
         if best is None or score > best[0]:
             best = (score, fit, crop_board, m)
         if not use_previous:
             break
-    assert best is not None
+    assert best is not None and first is not None
+    if best[0] < MATCH_MIN:
+        # none of the positions agrees with the board on file: the picture is of something else,
+        # so do not let tiny score differences pick a position; keep the best geometric fit
+        best = first
     match, fit, crop_board, m = best
     if ALIGN and not (use_previous and match < MATCH_MIN):
         aligned = refine_alignment(bgr, fit, cfg, model.occupancy)
