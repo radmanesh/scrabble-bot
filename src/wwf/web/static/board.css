@@ -1,7 +1,7 @@
 :root {
   --bg: #f6f4ef; --card: #fff; --ink: #1e1e1e; --muted: #6b6b6b; --line: #d9d5cc;
   --accent: #1f6feb; --accent-ink: #fff; --tile: #f3d9a4; --tile-ink: #3a2a10;
-  --tw: #f08a3c; --dw: #e0525c; --tl: #3fae6b; --dl: #4a8fd8; --ctr: #b48ad6;
+  --tw: #f08a3c; --dw: #e0525c; --tl: #3fae6b; --dl: #4a8fd8; --ctr: #b48ad6; --qw: #b0368f; --ql: #1f8f86; --mys: #7a3fd0;
   --review: #f5a524; --new: #1f6feb; --err: #c62828; --ok: #2e7d32;
 }
 @media (prefers-color-scheme: dark) {
@@ -77,6 +77,7 @@ input { min-width: 0; }
 .cell::placeholder { color: #fff; opacity: 0.9; font-size: 0.55em; font-weight: 600; }
 .cell.tw { background: var(--tw); } .cell.dw { background: var(--dw); }
 .cell.tl { background: var(--tl); } .cell.dl { background: var(--dl); } .cell.ctr { background: var(--ctr); }
+.cell.qw { background: var(--qw); } .cell.ql { background: var(--ql); } .cell.mys { background: var(--mys); }
 input.cell:not(:placeholder-shown), span.cell:not(:empty) { background: var(--tile); color: var(--tile-ink); }
 .cell.blank:not(:placeholder-shown), span.cell.blank:not(:empty) { color: var(--tile-ink); font-style: italic; text-decoration: underline dotted; background: color-mix(in srgb, var(--tile) 55%, var(--card)); }
 .cell.review { outline: 3px solid var(--review); outline-offset: -3px; }
@@ -268,6 +269,10 @@ button.link.danger { color: var(--err); }
 .pv-tw { fill: var(--tw); opacity: .55; } .pv-dw { fill: var(--dw); opacity: .55; }
 .pv-tl { fill: var(--tl); opacity: .55; } .pv-dl { fill: var(--dl); opacity: .55; }
 .pv-ctr { fill: var(--ctr); opacity: .55; }
+.pv-qw { fill: var(--qw); opacity: .55; } .pv-ql { fill: var(--ql); opacity: .55; } .pv-mys { fill: var(--mys); opacity: .55; }
+fieldset.rewards { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; display: grid; gap: 8px; }
+fieldset.rewards select { width: 100%; }
+.mode-badge { display: inline-block; font-size: .75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--mys); color: #fff; }
 
 /* game workspace: header link, action bar, move composer */
 .back-link { margin: 0 0 4px; font-size: 0.9rem; }

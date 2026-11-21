@@ -16,6 +16,7 @@ def reading(
     rack: str,
     unsure: frozenset[tuple[int, int]] | set[tuple[int, int]] = frozenset(),
     found: bool = True,
+    mode: str | None = None,
 ) -> RecognitionResultOut:
     board: list[list[str | None]] = [[None] * 15 for _ in range(15)]
     for r, (c0, word) in rows.items():
@@ -33,6 +34,7 @@ def reading(
         needs_review=[[(r, c) in unsure for c in range(15)] for r in range(15)],
         geometry=geometry if found else None,
         warnings=[] if found else ["board_not_found"],
+        mode=mode,
     )
 
 
@@ -48,8 +50,9 @@ class FakeReader:
         data: bytes,
         previous: list[list[str | None]] | None = None,
         hint_quad: list[list[float]] | None = None,
+        mode: str | None = None,
     ) -> RecognitionResultOut:
-        self.calls.append({"previous": previous, "hint_quad": hint_quad})
+        self.calls.append({"previous": previous, "hint_quad": hint_quad, "mode": mode})
         return self.next
 
 

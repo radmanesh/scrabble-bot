@@ -21,7 +21,8 @@ from wwf.core.diff import diff_boards
 from wwf.core.entry import placements_for_word
 from wwf.core.move import Direction, Move, Placement, build_move
 from wwf.core.rack import Rack
-from wwf.core.scoring import ScoreBreakdown, score_move, validate_move
+from wwf.core.rewards import mystery_cells, score_with_rewards
+from wwf.core.scoring import ScoreBreakdown, validate_move
 
 DICTIONARY_PREFIX = "word_not_in_dictionary:"
 
@@ -60,24 +61,38 @@ class Pending:
     analysis: Analysis
     placements: list[Placement]
     positions: set[tuple[int, int]] = field(default_factory=set)
+    mystery: list[tuple[int, int]] = field(default_factory=list)  # mystery squares covered
 
 
-def safe_board(svc: Services, grid: BoardGrid) -> Board | None:
+def safe_board(svc: Services, grid: BoardGrid, mode: str = "normal") -> Board | None:
     """The grid as a Board, or None while it holds something unreadable (a "?" tile)."""
     try:
-        return svc.board(grid)
+        return svc.board(grid, mode)
     except ValueError:
         return None
 
 
+def reward_map(rewards: dict[str, str]) -> dict[tuple[int, int], str]:
+    """Rewards saved on a game ("row,col" -> code) as {(row, col): code}."""
+    out = {}
+    for key, code in rewards.items():
+        r, c = key.split(",")
+        out[(int(r), int(c))] = code
+    return out
+
+
 def analyse(
-    svc: Services, board: Board, placements: list[Placement], dictionary_id: str
+    svc: Services,
+    board: Board,
+    placements: list[Placement],
+    dictionary_id: str,
+    rewards: dict[tuple[int, int], str] | None = None,
 ) -> Analysis:
     dictionary = svc.dictionaries.get(dictionary_id)
     move = build_move(board, placements)
     violations = validate_move(board, move, dictionary, svc.cfg)
     structural = [v for v in violations if not v.startswith(DICTIONARY_PREFIX)]
-    score = None if structural else score_move(board, move, svc.cfg)
+    score = None if structural else score_with_rewards(board, move, svc.cfg, rewards or {})
     return Analysis(move, violations, score)
 
 
@@ -93,22 +108,26 @@ def open_positions(game: Game) -> set[tuple[int, int]]:
 
 def pending_move(svc: Services, game: Game) -> Pending | None:
     """The move implied by the tiles added to the base board, if there are any."""
-    base, now = safe_board(svc, game.base_board), safe_board(svc, game.board)
+    base, now = safe_board(svc, game.base_board, game.mode), safe_board(svc, game.board, game.mode)
     if base is None or now is None:
         return None
     diff = diff_boards(base, now)
     if not diff.placements:
         return None
     placements = list(diff.placements)
+    mystery = mystery_cells(base, build_move(base, placements))
+    chosen = reward_map(game.open_rewards)
+    rewards = {cell: code for cell, code in chosen.items() if cell in mystery}
     return Pending(
-        analysis=analyse(svc, base, placements, game.dictionary_id),
+        analysis=analyse(svc, base, placements, game.dictionary_id, rewards),
         placements=placements,
         positions={(p.row, p.col) for p in placements},
+        mystery=mystery,
     )
 
 
 def bag_for(svc: Services, game: Game) -> BagReport | None:
-    board = safe_board(svc, game.board)
+    board = safe_board(svc, game.board, game.mode)
     if board is None:
         return None
     try:
@@ -193,6 +212,7 @@ def apply_solver_move(game: Game, n: int) -> None:
     mv = result.moves[n]
     game.board = [row[:] for row in mv.board_after]
     game.rack = mv.leave
+    game.open_rewards = {}
     game.open_source = "suggestion"
     game.open_player = "me"
     game.last_result = None
@@ -233,7 +253,7 @@ def preview_typed_move(
 
     Nothing is changed: this is what the composer shows before anything is recorded."""
     _require_closed(game)
-    board = safe_board(svc, game.board)
+    board = safe_board(svc, game.board, game.mode)
     if board is None:
         raise MoveRejected(["unreadable_board"])
     placements, problems = placements_for_word(board, word, row - 1, col - 1, Direction(direction))
@@ -326,7 +346,7 @@ def apply_typed_move(
 ) -> None:
     """Put a word (one-based row and column of its first letter) on the board as the open turn."""
     _require_closed(game)
-    board = safe_board(svc, game.board)
+    board = safe_board(svc, game.board, game.mode)
     if board is None:
         raise MoveRejected(["unreadable_board"])
     placements, problems = placements_for_word(board, word, row - 1, col - 1, Direction(direction))
@@ -345,6 +365,7 @@ def cancel_turn(game: Game) -> None:
     """Throw away the open turn: the board and rack go back to how the turn began."""
     game.board = [row[:] for row in game.base_board]
     game.rack = game.base_rack
+    game.open_rewards = {}
     game.open_source = ""
     game.open_player = None
     game.last_result = None
@@ -370,6 +391,7 @@ def _lock(game: Game, turn: Turn) -> Turn:
         pic.label_rack = game.rack
         pic.label_turn = turn.n
     game.turns.append(turn)
+    game.open_rewards = {}
     game.base_board = [row[:] for row in game.board]
     game.base_rack = game.rack
     game.open_source = ""
@@ -415,6 +437,12 @@ def confirm_turn(svc: Services, game: Game, player: Player, force: bool = False)
     if analysis.score is None or (analysis.violations and not (force and analysis.forceable)):
         raise MoveRejected(analysis.violations, forceable=analysis.forceable)
     move, score = analysis.move, analysis.score
+    if analysis.violations:
+        # The user vouches for these words: remember them in the word list for next time.
+        svc.dictionaries.learn(
+            game.dictionary_id,
+            (v[len(DICTIONARY_PREFIX):] for v in analysis.violations),
+        )
     turn = Turn(
         n=len(game.turns) + 1,
         player=player,
@@ -431,6 +459,11 @@ def confirm_turn(svc: Services, game: Game, player: Player, force: bool = False)
         bingo=score.bingo_bonus,
         source=game.open_source or "grid",
         forced=bool(analysis.violations),
+        rewards={
+            f"{r},{c}": code
+            for (r, c), code in reward_map(game.open_rewards).items()
+            if (r, c) in pending.mystery
+        },
         **_snapshot(game),
     )
     game.phase = "opponent_turn" if player == "me" else "my_turn"
@@ -475,6 +508,7 @@ def undo(game: Game) -> Turn:
     game.board = game.board if turn.kind != "pass" else [row[:] for row in game.base_board]
     game.open_source = turn.source if open_positions(game) else ""
     game.open_player = turn.player if turn.kind == "play" and game.open_source else None
+    game.open_rewards = dict(turn.rewards)
     for pic in game.pictures:  # the picture's label belonged to that turn; it can change now
         if pic.label_turn == turn.n:
             pic.label_board = pic.label_rack = pic.label_turn = None

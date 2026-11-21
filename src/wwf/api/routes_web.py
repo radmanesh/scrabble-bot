@@ -20,6 +20,7 @@ from wwf.api.app import services as get_services
 from wwf.api.games import Game
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK, BoardGrid, check_rack
 from wwf.api.services import ApiError, Services
+from wwf.core.config import MODE_LABELS
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
@@ -45,8 +46,13 @@ CHOICE_LABELS = {
     "score_then_leave": "Higher score, then the better tiles kept",
     "score_only": "Higher score only",
 }
-BONUS_LABELS = {"T": "TW", "D": "DW", "t": "TL", "d": "DL", "*": "★", ".": ""}
-BONUS_CLASSES = {"T": "tw", "D": "dw", "t": "tl", "d": "dl", "*": "ctr", ".": ""}
+BONUS_LABELS = {
+    "T": "TW", "D": "DW", "t": "TL", "d": "DL", "Q": "QW", "q": "QL", "?": "?", "*": "★", ".": ""
+}  # fmt: skip
+BONUS_CLASSES = {
+    "T": "tw", "D": "dw", "t": "tl", "d": "dl", "Q": "qw", "q": "ql", "?": "mys", "*": "ctr",
+    ".": "",
+}  # fmt: skip
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -54,9 +60,11 @@ BONUS_CLASSES = {"T": "tw", "D": "dw", "t": "tl", "d": "dl", "*": "ctr", ".": ""
 
 def _render(request: Request, name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
     svc = get_services(request)
-    layout = svc.cfg.layout
+    game = ctx.get("game")
+    layout = svc.config_for(game.mode if isinstance(game, Game) else "normal").layout
     ctx.setdefault("bonus", [[BONUS_CLASSES[ch] for ch in row] for row in layout])
     ctx.setdefault("bonus_label", [[BONUS_LABELS[ch] for ch in row] for row in layout])
+    ctx.setdefault("mode_labels", MODE_LABELS)
     ctx.setdefault("size", BOARD_SIZE)
     return templates.TemplateResponse(request, name, ctx, status_code=status)
 
@@ -122,7 +130,7 @@ def home(request: Request) -> HTMLResponse:
         request,
         "upload.html",
         model_loaded=svc.recognizer is not None,
-        games=[_game_summary(g) for g in svc.games.saved()],
+        games=[_game_summary(svc, g) for g in svc.games.saved()],
     )
 
 
@@ -154,7 +162,7 @@ def _preview_rows(g: Game) -> tuple[list[str], list[str], int, int]:
     return letters, state, confirmed, draft
 
 
-def _game_summary(g: Game) -> dict[str, Any]:
+def _game_summary(svc: Services, g: Game) -> dict[str, Any]:
     scores = g.scores()
     letters, state, confirmed, draft = _preview_rows(g)
     if not g.started:
@@ -175,6 +183,9 @@ def _game_summary(g: Game) -> dict[str, Any]:
         "turns": sum(1 for t in g.turns if t.kind != "start"),
         "pictures": len(g.pictures),
         "updated": g.updated_at.replace("T", " ")[:16],
+        "mode": g.mode,
+        "mode_label": MODE_LABELS.get(g.mode, g.mode),
+        "bonus": [[BONUS_CLASSES[ch] for ch in row] for row in svc.config_for(g.mode).layout],
         "preview": state,
         "letters": letters,
         "summary": f"Board with {tiles}." if confirmed + draft else "Empty board.",
@@ -193,7 +204,7 @@ async def upload(
     except ApiError as e:
         return _render(request, "upload.html", e.status, error=upload_error(e),
                        model_loaded=svc.recognizer is not None,
-                       games=[_game_summary(g) for g in svc.games.saved()])  # fmt: skip
+                       games=[_game_summary(svc, g) for g in svc.games.saved()])  # fmt: skip
     game = _new_game(request)
     await run_blocking(
         request, svc.attach_picture, game, data, content_type, picture_source(source, content_type)

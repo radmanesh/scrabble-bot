@@ -35,6 +35,7 @@ def to_out(r: RecognitionResult) -> RecognitionResultOut:
         geometry=geometry,
         warnings=r.warnings,
         input_type="photo" if r.input_type == "photo" else "screenshot",
+        mode=r.mode,
         elapsed_ms=r.elapsed_ms,
         kept_from_previous=r.kept_from_previous,
         new_tiles=r.new_tiles,
@@ -61,8 +62,9 @@ def load_recognizer(cfg: BoardConfig, path: Path) -> Callable[..., RecognitionRe
         data: bytes,
         previous: list[list[str | None]] | None = None,
         hint_quad: list[list[float]] | None = None,
+        mode: str | None = None,
     ) -> RecognitionResultOut:
-        return to_out(recognizer(data, previous, hint_quad))
+        return to_out(recognizer(data, previous, hint_quad, mode))
 
     read.model = recognizer.model  # type: ignore[attr-defined]
     return read

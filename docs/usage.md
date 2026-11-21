@@ -57,6 +57,30 @@ dictionary is built and cached.
 
 Stop it with Ctrl+C. Games are saved to disk after every action, so nothing is lost.
 
+### Game modes
+
+A game is either **Normal** or **Super Score**, the monthly event board that adds quadruple word
+(QW) and quadruple letter (QL) squares and mystery squares (`?`). The mode is stored with the game
+and decides the board it shows, how moves are scored and which layout the picture reader expects.
+
+- **From a picture:** the reader tries each mode's layout against the coloured bonus squares and
+  keeps the one that fits best, so a Super Score screenshot starts a Super Score game. A game that
+  has started keeps its mode for later pictures.
+- **By hand:** until the starting position is confirmed, the setup card has a **Game mode**
+  dropdown to correct the choice (and to set it for a board typed in). After that it is fixed.
+- **Mystery squares (`?`):** playing on one earns a random reward: Double, Triple or Quadruple
+  Letter, Double, Triple or Quadruple Word, Points Plus (+10 to the move), Powerful Tile or Fire
+  Tile (both only change your rack's tile values). The odds are not known, so no average is
+  guessed. A suggestion's score counts a mystery square as plain and, when the move lands on one,
+  adds "up to N", the best any reward could give. Such a suggestion is put on the board rather than
+  recorded straight away: the open turn then asks which reward you got for each mystery square, and
+  the score updates when you press Save. The reward is kept with the confirmed turn (and comes back
+  if you undo it). Powerful and Fire Tile are accepted but score nothing, and their effect on your
+  rack is not tracked. The Super Ability meter is not modelled either. Everything else (letter
+  values, the 35-point bingo) is as in Normal.
+- **Assumption:** the best case allows all nine rewards on every mystery square. One screenshot of
+  the game's reward list showed only five of them, so the real pool may be smaller for some squares.
+
 ### Playing a game
 
 A game is one page, `/game/<id>`. Pictures, typed words and the solver's suggestions all feed the
@@ -361,6 +385,9 @@ Bonus squares come from the layout in `config/wwf_current.json` (see the configu
 | `D` | double word |
 | `t` | triple letter |
 | `d` | double letter |
+| `Q` | quadruple word (Super Score only) |
+| `q` | quadruple letter (Super Score only) |
+| `?` | mystery square (Super Score only; scores as a plain square) |
 | `*` | centre (no bonus in WWF) |
 | `.` | no bonus |
 
@@ -576,7 +603,12 @@ Two layouts ship:
   photos. Its centre square was hidden in every photo, so it's assumed to carry no bonus.
 - **`wwf_classic.json`:** the layout from the build spec.
 
-Both use the same letter values, bag and 35-point bingo. Pick one with
+A third, **`wwf_super_score.json`**, is the Super Score board (see Game modes), read from a
+screenshot; its centre was covered by tiles, so it too is assumed to carry no bonus. Its `mode`
+field is `super_score`; `config.MODES` maps each mode name to its file, and
+`load_board_config(mode="super_score")` loads it.
+
+All use the same letter values, bag and 35-point bingo. Pick one with
 `WWF_BOARD_CONFIG=wwf_classic.json`. The core scoring tests use the classic layout, since their
 worked examples were computed on it.
 
@@ -584,6 +616,7 @@ worked examples were computed on it.
 | --- | --- |
 | `size` | Board size (15) |
 | `center` | Centre cell, `[7, 7]` |
+| `mode` | `normal` (default) or `super_score` |
 | `layout` | The full 15 row strings, using the bonus characters above |
 | `letter_values` | Points per letter; `?` (blank) is 0 |
 | `bag` | Tile distribution, 104 tiles. Read but unused in v1. |

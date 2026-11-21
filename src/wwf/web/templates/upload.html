@@ -31,7 +31,7 @@
   <li class="game-card card" data-name="{{ g.name | lower }}">
     <div class="card-board">{% include "_board_preview.html" %}</div>
     <div class="card-body">
-      <h2 class="game-name">{{ g.name }}</h2>
+      <h2 class="game-name">{{ g.name }}{% if g.mode != "normal" %} <span class="mode-badge">{{ g.mode_label }}</span>{% endif %}</h2>
       <p class="game-status {{ 'mine' if g.status == 'Your turn' else '' }}">{{ g.status }}</p>
       {% if g.started %}
       <p class="game-score">You <b>{{ g.me }}</b> · Opponent <b>{{ g.opponent }}</b>

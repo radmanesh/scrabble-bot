@@ -560,7 +560,9 @@
       text("sel-word", m.word); text("sel-score", m.score);
       const words = m.words.map((w) => `${w.word} ${w.points}`).join(" + ") + (m.bingo ? ` + bingo ${m.bingo}` : "");
       text("sel-detail", `${m.direction === "across" ? "Across" : "Down"} from row ${m.start[0]}, column ${m.start[1]} · ${words} · Tiles left on your rack: ${m.leave || "none"}`);
-      document.getElementById("record-form").action = `/game/${game}/record/${n}`;
+      text("sel-best", m.best ? ` up to ${m.best} with a lucky mystery square` : "");
+      document.getElementById("record-form").action = `/game/${game}/${m.mystery ? "play" : "record"}/${n}`;
+      text("record-button", m.mystery ? "Put on board, then choose the reward" : "Record this move");
       text("sel-note", `Previewing ${m.word} for ${m.score} points, shown dashed on the board. Not recorded yet.`);
       history.replaceState(null, "", `?do=find&move=${n}`);
     }

@@ -11,9 +11,9 @@ import cv2
 import numpy as np
 from PIL import Image, ImageOps
 
-from wwf.core.config import BoardConfig, assets_dir
+from wwf.core.config import MODES, BoardConfig, assets_dir, load_board_config
 from wwf.vision.align import refine_alignment
-from wwf.vision.board import find_boards, visible_mask
+from wwf.vision.board import BoardFit, find_boards, visible_mask
 from wwf.vision.occupancy import agreement, measure
 from wwf.vision.reader import (
     LETTERS,
@@ -62,6 +62,7 @@ class RecognitionResult:
     geometry: Geometry | None = None
     warnings: list[str] = field(default_factory=list)
     input_type: str = "photo"
+    mode: str = "normal"  # the game mode whose board the picture was read against
     elapsed_ms: int = 0
     # reading a new turn against the board already on file
     merged: bool = False  # the previous board was applied here (the caller must not repeat it)
@@ -134,13 +135,15 @@ def read_image(
     cfg: BoardConfig,
     previous: list[list[str | None]] | None = None,
     hint_quad: list[list[float]] | None = None,
+    fits: list[BoardFit] | None = None,
 ) -> RecognitionResult | None:
     """Read a picture. With `previous` (the board already on file), tiles stay where they are
     and only squares that were empty are read: tiles never leave a WWF board.
 
     Returns None only when no board could be found at all."""
     hints = (_quad_homography(hint_quad),) if hint_quad else ()
-    fits = find_boards(bgr, cfg, hints=hints)
+    if fits is None:
+        fits = find_boards(bgr, cfg, hints=hints)
     if not fits:
         return None
 
@@ -296,20 +299,60 @@ def read_image(
     )
 
 
+def fit_strength(fit: BoardFit) -> float:
+    """How well a layout explains the picture: the share of its bonus squares found, weighted by
+    how much the plain squares look like empty ones."""
+    return fit.matches / max(fit.expected, 1) * (0.1 + fit.cream)
+
+
+def detect_mode(
+    bgr: np.ndarray,
+    configs: dict[str, BoardConfig],
+    hints: tuple[np.ndarray, ...] = (),
+) -> tuple[str, list[BoardFit]]:
+    """The game mode whose board layout fits the picture best, with that layout's fits.
+
+    Each mode is a different pattern of bonus squares, so only the right one lines up with the
+    coloured squares in the picture. The first mode wins a tie, and when no layout fits at all."""
+    best: tuple[float, str, list[BoardFit]] | None = None
+    for mode, cfg in configs.items():
+        fits = find_boards(bgr, cfg, hints=hints)
+        strength = fit_strength(fits[0]) if fits else 0.0
+        if best is None or strength > best[0] + 1e-9:
+            best = (strength, mode, fits)
+    assert best is not None
+    return best[1], best[2]
+
+
 def recognize(
     image_bytes: bytes,
     model: ReaderModel,
-    cfg: BoardConfig,
+    cfg: BoardConfig | dict[str, BoardConfig],
     previous: list[list[str | None]] | None = None,
     hint_quad: list[list[float]] | None = None,
+    mode: str | None = None,
 ) -> RecognitionResult:
+    """Read a picture. `cfg` is one board config, or one per mode: then the mode is `mode` when
+    given (a game already has one) and otherwise the one whose layout fits the picture."""
     start = time.perf_counter()
     bgr = decode(image_bytes)
-    result = read_image(bgr, model, cfg, previous, hint_quad)
+    configs = cfg if isinstance(cfg, dict) else {cfg.mode: cfg}
+    fits = None
+    if mode in configs:
+        chosen = mode
+    elif len(configs) == 1:
+        chosen = next(iter(configs))
+    else:
+        hints = (_quad_homography(hint_quad),) if hint_quad else ()
+        chosen, fits = detect_mode(bgr, configs, hints)
+    result = read_image(bgr, model, configs[chosen], previous, hint_quad, fits)
+    if result is not None:
+        result.mode = chosen
     if result is None:
         result = _empty_result(previous, ["board_not_found"])
         result.merged = previous is not None and any(any(row) for row in previous)
         result.kept_from_previous = sum(bool(ch) for row in previous or [] for ch in row)
+        result.mode = chosen
     result.elapsed_ms = int((time.perf_counter() - start) * 1000)
     return result
 
@@ -320,14 +363,20 @@ class Recognizer:
     def __init__(self, model: ReaderModel, cfg: BoardConfig) -> None:
         self.model = model
         self.cfg = cfg
+        # every mode's board, so a picture can say which one it shows
+        self.configs: dict[str, BoardConfig] = {cfg.mode: cfg}
+        for mode in MODES:
+            if mode not in self.configs:
+                self.configs[mode] = load_board_config(mode=mode)
 
     def __call__(
         self,
         image_bytes: bytes,
         previous: list[list[str | None]] | None = None,
         hint_quad: list[list[float]] | None = None,
+        mode: str | None = None,
     ) -> RecognitionResult:
-        return recognize(image_bytes, self.model, self.cfg, previous, hint_quad)
+        return recognize(image_bytes, self.model, self.configs, previous, hint_quad, mode)
 
     @classmethod
     def load(cls, cfg: BoardConfig, path: Path = DEFAULT_MODEL) -> Recognizer | None:

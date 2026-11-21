@@ -28,6 +28,7 @@ from wwf.api.routes_web import (
 )
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK
 from wwf.api.services import ApiError, Services
+from wwf.core.rewards import REWARDS
 from wwf.vision.perspective import square_png, warp_board_png
 
 router = APIRouter(include_in_schema=False)
@@ -171,6 +172,7 @@ def _suggestions_view(game: Game, selected: int) -> list[dict[str, Any]]:
             "start": [m.start[0] + 1, m.start[1] + 1], "leave": m.leave,
             "words": [{"word": w.word, "points": w.points} for w in m.score.words],
             "bingo": m.score.bingo_bonus, "tiles": len(m.placements), "cells": cells,
+            "best": m.best, "mystery": bool(m.mystery),
         })  # fmt: skip
     return out
 
@@ -195,6 +197,16 @@ def _pending_view(svc: Services, game: Game, pending: Pending | None) -> dict[st
         "points": score.total if score else None,
         "words": [(w.word, w.points) for w in score.words] if score else [],
         "bingo": score.bingo_bonus if score else 0,
+        "reward_points": score.reward_points if score else 0,
+        "mystery": [
+            {
+                "r": r + 1,
+                "c": c + 1,
+                "name": f"reward-{r}-{c}",
+                "value": game.open_rewards.get(f"{r},{c}", ""),
+            }
+            for r, c in pending.mystery
+        ],
         "legal": a.legal,
         "forceable": a.forceable,
         "problems": [gameplay.explain(v, label) for v in a.violations],
@@ -244,6 +256,7 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         "game.html",
         status,
         game=game,
+        rewards=REWARDS,
         recognition=rec,
         needs_review=rec.needs_review if rec else [[False] * BOARD_SIZE] * BOARD_SIZE,
         pending=_pending_view(svc, game, pending),
@@ -336,6 +349,12 @@ async def board_submit(request: Request, game_id: str) -> Response:
     if errors:
         return _page(request, game, 422, board=board, rack=rack_cells, errors=errors)
     gameplay.apply_edit(game, board, rack)
+    game.open_rewards = {
+        f"{r},{c}": str(v)
+        for r in range(BOARD_SIZE)
+        for c in range(BOARD_SIZE)
+        if (v := form.get(f"reward-{r}-{c}")) and str(v) in REWARDS
+    }
     label = svc.dictionaries.info(game.dictionary_id).label
     labelled = False
     try:
@@ -683,6 +702,21 @@ def picture_board(request: Request, game_id: str, picture_id: str) -> Response:
 
 
 # --- housekeeping ----------------------------------------------------------------------------
+
+
+@router.post("/game/{game_id}/mode")
+def set_mode(request: Request, game_id: str, mode: str = Form("normal")) -> Response:
+    """Choose the board a game that has not started yet is played on."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    try:
+        get_services(request).set_mode(game, mode)
+    except ApiError as e:
+        msg = "The mode can only change before the game starts."
+        return _page(request, game, e.status, errors=[msg])
+    _save(request, game)
+    return _redirect(f"/game/{game.id}")
 
 
 @router.post("/game/{game_id}/rename")

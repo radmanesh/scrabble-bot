@@ -37,19 +37,24 @@ class TrieDictionary:
         self._root = TrieNode()
         self._words: set[str] = set()
         for raw in words:
-            w = raw.strip().upper()
-            if len(w) < 2 or not w.isascii() or not w.isalpha():
-                continue  # single letters are not words; skip junk lines
-            if w in self._words:
-                continue
-            self._words.add(w)
-            node = self._root
-            for ch in w:
-                nxt = node.children.get(ch)
-                if nxt is None:
-                    nxt = node.children[ch] = TrieNode()
-                node = nxt
-            node.terminal = True
+            self.add(raw)
+
+    def add(self, raw: str) -> bool:
+        """Add a word; False if it was skipped (junk, single letter) or already present."""
+        w = raw.strip().upper()
+        if len(w) < 2 or not w.isascii() or not w.isalpha():
+            return False  # single letters are not words; skip junk lines
+        if w in self._words:
+            return False
+        self._words.add(w)
+        node = self._root
+        for ch in w:
+            nxt = node.children.get(ch)
+            if nxt is None:
+                nxt = node.children[ch] = TrieNode()
+            node = nxt
+        node.terminal = True
+        return True
 
     def contains(self, word: str) -> bool:
         return word.upper() in self._words
@@ -165,6 +170,24 @@ class DictionaryRegistry:
             if did not in self._loaded:
                 self._loaded[did] = load_dictionary(info.path, self._cache_dir)
             return self._loaded[did]
+
+    def learn(self, dictionary_id: str | None, words: Iterable[str]) -> list[str]:
+        """Add words to a word list, in memory and in its file, for future use.
+
+        Returns the words that were new. The file gains one lowercase word per line."""
+        did = dictionary_id or self.default_id
+        dictionary = self.get(did)
+        with self._lock:
+            added = [w.strip().lower() for w in words if dictionary.add(w)]
+            if added:
+                with self._infos[did].path.open("rb+") as f:
+                    lead = b""
+                    if f.seek(0, os.SEEK_END):
+                        f.seek(-1, os.SEEK_END)
+                        if f.read(1) != b"\n":
+                            lead = b"\n"
+                    f.write(lead + "".join(f"{w}\n" for w in added).encode())
+        return added
 
 
 def load_dictionary_registry(

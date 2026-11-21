@@ -17,15 +17,15 @@
   <div class="selected-move" id="selected-move">
     <p class="preview-label"><span class="lg proposed">Preview</span>
       <span id="sel-note">Shown dashed on the board. Not recorded yet.</span></p>
-    <h3><span id="sel-word">{{ cur.word }}</span> <span class="score" id="sel-score">{{ cur.score }}</span></h3>
+    <h3><span id="sel-word">{{ cur.word }}</span> <span class="score" id="sel-score">{{ cur.score }}</span><span class="small" id="sel-best">{% if cur.best %} up to {{ cur.best }} with a lucky mystery square{% endif %}</span></h3>
     <p class="small" id="sel-detail">
       {{ "Across" if cur.direction == "across" else "Down" }} from row {{ cur.start[0] }}, column {{ cur.start[1] }}
       · {% for w in cur.words %}{{ w.word }} {{ w.points }}{% if not loop.last %} + {% endif %}{% endfor %}{% if cur.bingo %} + bingo {{ cur.bingo }}{% endif %}
       · Tiles left on your rack: <span class="kbd">{{ cur.leave or "none" }}</span>
     </p>
-    <form action="/game/{{ game.id }}/record/{{ cur.n }}" method="post" id="record-form">
+    <form action="/game/{{ game.id }}/{{ "play" if cur.mystery else "record" }}/{{ cur.n }}" method="post" id="record-form">
       <input type="hidden" name="turn" value="{{ game.turn_number }}">
-      <button type="submit" class="primary big" id="record-button">Record this move</button>
+      <button type="submit" class="primary big" id="record-button">{{ "Put on board, then choose the reward" if cur.mystery else "Record this move" }}</button>
     </form>
   </div>
 
@@ -38,7 +38,7 @@
       <td>{{ loop.index }}</td>
       <td><a href="?do=find&amp;move={{ m.n }}{% if show_all %}&amp;all=1{% endif %}"
              {% if m.n == selected %}aria-current="true"{% endif %}>{{ m.word }}<span class="sr-only"> for {{ m.score }} points, preview on the board</span></a></td>
-      <td class="num">{{ m.score }}</td>
+      <td class="num">{{ m.score }}{% if m.best %} <span class="small" title="best case with a lucky mystery square">(up to {{ m.best }})</span>{% endif %}</td>
       <td>{{ m.start[0] }},{{ m.start[1] }}</td>
       <td><span aria-hidden="true">{{ "→" if m.direction == "across" else "↓" }}</span><span class="sr-only">{{ m.direction }}</span></td>
       <td class="mono">{{ m.leave or "—" }}</td>

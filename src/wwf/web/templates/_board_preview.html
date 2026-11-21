@@ -12,6 +12,6 @@
   <text x="{{ c }}.5" y="{{ r }}.75" class="pv-letter{% if letter.islower() %} pv-blank-letter{% endif %}">{{ letter | upper }}</text>
   {% elif ch == "d" %}<rect x="{{ c }}.1" y="{{ r }}.1" width=".8" height=".8" rx=".14" class="pv-draft"/>
   <text x="{{ c }}.5" y="{{ r }}.75" class="pv-letter pv-draft-letter{% if letter.islower() %} pv-blank-letter{% endif %}">{{ letter | upper }}</text>
-  {% elif bonus[r][c] %}<rect x="{{ c }}.1" y="{{ r }}.1" width=".8" height=".8" rx=".14" class="pv-{{ bonus[r][c] }}"/>
+  {% elif g.bonus[r][c] %}<rect x="{{ c }}.1" y="{{ r }}.1" width=".8" height=".8" rx=".14" class="pv-{{ g.bonus[r][c] }}"/>
   {% endif %}{% endfor %}{% endfor %}
 </svg>

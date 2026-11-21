@@ -103,7 +103,7 @@
   {% set proposed = {} %}
   {% if composer_preview %}{% for c in composer_preview.cells %}{% set _ = proposed.update({(c.r, c.c): c}) %}{% endfor %}{% endif %}
   {# Premium squares spelled out for assistive technology (the squares show TW, DL, ...). #}
-  {% set premium = {"TW": "triple word", "DW": "double word", "TL": "triple letter", "DL": "double letter", "★": "centre star"} %}
+  {% set premium = {"TW": "triple word", "DW": "double word", "TL": "triple letter", "DL": "double letter", "QW": "quadruple word", "QL": "quadruple letter", "?": "mystery square", "★": "centre star"} %}
   <div class="board-tools js-only" hidden>
     <button type="button" id="board-zoom" aria-pressed="false">Larger board</button>
     <span class="hint small">Arrow keys move around the board. Tab leaves it.</span>

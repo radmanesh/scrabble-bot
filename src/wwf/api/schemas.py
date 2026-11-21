@@ -82,6 +82,7 @@ class RecognitionResultOut(ApiModel):
     geometry: GridGeometryOut | None = None
     warnings: list[str] = []
     input_type: Literal["screenshot", "photo", "unknown"] = "unknown"
+    mode: str | None = None  # the game mode the picture's board layout belongs to, if known
     elapsed_ms: int = 0
     # next turn: tiles kept from the previous board, new tiles read, and kept tiles the new
     # picture seems to disagree with (flagged for review, but the previous value is kept)
@@ -125,6 +126,9 @@ class MoveOut(ApiModel):
     score: ScoreOut
     leave: str
     board_after: BoardGrid
+    # Super Score: mystery squares the move lands on, and the most it could score with luck
+    mystery: list[tuple[int, int]] = []
+    best: int | None = None
 
 
 class SolveResponse(Envelope):

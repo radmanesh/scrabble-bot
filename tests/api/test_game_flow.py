@@ -439,3 +439,13 @@ def test_game_pictures_become_training_examples(
     client.post(f"/game/{gid}/board", data=_current_form(services, gid, "start_me"))
     (example,) = load_game_examples(games_dir)
     assert example.board[7][5:10] == "HELLO" and example.rack == "ABCDEFG"
+
+
+def test_forced_word_is_learned_for_next_time(client: TestClient, services: Services) -> None:
+    gid = started_game(client, phase="start_opponent")
+    _word(client, gid, "HQZ", 8, 6, "down", "opponent")
+    data = _current_form(services, gid, "confirm_opponent") | {"force": "1"}
+    client.post(f"/game/{gid}/board", data=data)
+    did = services.game(gid).dictionary_id
+    assert "HQZ" in services.dictionaries.get(did)
+    assert services.dictionaries.info(did).path.read_text().splitlines()[-1] == "hqz"
