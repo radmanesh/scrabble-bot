@@ -34,9 +34,10 @@ from wwf.api.schemas import (
     WordOut,
 )
 from wwf.core.board import Board
-from wwf.core.config import BoardConfig
+from wwf.core.config import MODES, BoardConfig, load_board_config
 from wwf.core.dictionary import DictionaryRegistry
 from wwf.core.rack import Rack
+from wwf.core.rewards import best_case, mystery_cells
 from wwf.core.scoring import ScoreBreakdown
 from wwf.solvers.base import ParamError, ScoredMove, resolve_params
 from wwf.solvers.registry import SolverRegistry
@@ -92,6 +93,7 @@ class Services:
         games: GameStore | None = None,
     ) -> None:
         self.cfg = cfg
+        self._configs: dict[str, BoardConfig] = {cfg.mode: cfg}
         self.solvers = solvers
         self.dictionaries = dictionaries
         self.games = games if games is not None else GameStore(settings.games_dir)
@@ -146,10 +148,26 @@ class Services:
         return self.default_options()
 
     def new_game(
-        self, options: tuple[str, dict[str, Any], str | None] | None = None, *, name: str = ""
+        self,
+        options: tuple[str, dict[str, Any], str | None] | None = None,
+        *,
+        name: str = "",
+        mode: str = "normal",
     ) -> Game:
         sid, params, did = self._resolve_options(options)
-        return self.games.create(sid, params, did, name=name)
+        return self.games.create(sid, params, did, name=name, mode=self.check_mode(mode))
+
+    def check_mode(self, mode: str) -> str:
+        if mode not in MODES:
+            raise ApiError(422, "unknown_mode", {"mode": mode, "known": list(MODES)})
+        return mode
+
+    def config_for(self, mode: str) -> BoardConfig:
+        """The board config a game of this mode is played on (loaded on first use)."""
+        cfg = self._configs.get(mode)
+        if cfg is None:
+            cfg = self._configs[mode] = load_board_config(mode=self.check_mode(mode))
+        return cfg
 
     def game(self, game_id: str) -> Game:
         game = self.games.get(game_id)
@@ -157,8 +175,20 @@ class Services:
             raise ApiError(404, "game_not_found", {"game_id": game_id})
         return game
 
+    def set_mode(self, g: Game, mode: str) -> None:
+        """Choose the board a game is played on, before it has started."""
+        mode = self.check_mode(mode)
+        if g.started:
+            raise ApiError(409, "game_started", {"game_id": g.id})
+        if mode != g.mode:
+            g.mode = mode
+            g.last_result = None  # suggestions were scored on the other board
+
     def set_options(self, g: Game, solver_id: str, params: dict[str, Any], did: str | None) -> None:
+        before = (g.solver_id, g.params, g.dictionary_id)
         g.solver_id, g.params, g.dictionary_id = self.check_options(solver_id, params, did)
+        if (g.solver_id, g.params, g.dictionary_id) != before:
+            g.last_result = None  # suggestions were made with the old settings
 
     # --- recognition ------------------------------------------------------------------------
 
@@ -181,13 +211,16 @@ class Services:
         data: bytes,
         previous: BoardGrid | None = None,
         hint_quad: list[list[float]] | None = None,
+        mode: str | None = None,
     ) -> RecognitionResultOut:
+        """Read a picture. `mode` is the game's mode; None lets the reader work it out."""
         if self.recognizer is None:
             return unavailable_recognition()
         try:
-            takes_context = "previous" in inspect.signature(self.recognizer).parameters
-            if takes_context:
-                return self.recognizer(data, previous=previous, hint_quad=hint_quad)
+            params = inspect.signature(self.recognizer).parameters
+            if "previous" in params:
+                extra = {"mode": mode} if "mode" in params else {}
+                return self.recognizer(data, previous=previous, hint_quad=hint_quad, **extra)
             return self.recognizer(data)
         except Exception as e:  # recognition failure is a warning, never a crash
             log.exception("reading a picture failed")
@@ -203,12 +236,15 @@ class Services:
         belong to the game is refused and changes nothing (and is not kept)."""
         previous = g.base_board if g.started and any(any(r) for r in g.base_board) else None
         hint = g.recognition.geometry.quad if g.recognition and g.recognition.geometry else None
-        result = self.recognize(data, previous, hint)
+        # a game that has begun keeps its mode; before that the picture says which board it is
+        result = self.recognize(data, previous, hint, g.mode if g.started else None)
         if previous is not None and not result.merged:
             result = merge_with_previous(result, previous)  # a reader that does not merge itself
         if result.rejected:
             g.notice = {"kind": "refused", "warnings": result.warnings, "match": result.match}
             return result
+        if not g.started and result.mode in MODES:
+            g.mode = result.mode
         pic = self.games.add_picture(g, data, content_type, source)
         pic.read_board = grid_to_rows(result.board)
         pic.read_rack = "".join(result.rack)
@@ -238,8 +274,8 @@ class Services:
 
     # --- solving ----------------------------------------------------------------------------
 
-    def board(self, grid: BoardGrid) -> Board:
-        return Board.from_rows(self.cfg, grid)
+    def board(self, grid: BoardGrid, mode: str = "normal") -> Board:
+        return Board.from_rows(self.config_for(mode), grid)
 
     def solve(
         self,
@@ -254,10 +290,10 @@ class Services:
         else:
             base_params, sid = params or {}, solver_id
         sid, full, did = self.check_options(sid, base_params, dictionary_id or s.dictionary_id)
-        board = self.board(s.board)
+        board = self.board(s.board, s.mode)
         rack = Rack.from_string(s.rack)
         result = self.solvers.get(sid).solve(
-            board, rack, self.dictionaries.get(did), self.cfg, **full
+            board, rack, self.dictionaries.get(did), self.config_for(s.mode), **full
         )
         response = SolveResponse(
             solver_id=sid,
@@ -265,13 +301,15 @@ class Services:
             dictionary_id=did,
             elapsed_ms=result.elapsed_ms,
             stats=result.stats,
-            moves=[self.move_out(board, m) for m in result.moves],
+            moves=[self.move_out(board, m, self.config_for(s.mode)) for m in result.moves],
         )
         s.last_result = response
         return response
 
-    def move_out(self, board: Board, sm: ScoredMove) -> MoveOut:
+    def move_out(self, board: Board, sm: ScoredMove, cfg: BoardConfig) -> MoveOut:
         m = sm.move
+        mystery = mystery_cells(board, m)
+        best = best_case(board, m, cfg)[0] if mystery else None
         return MoveOut(
             word=m.main_word,
             direction=m.direction.value,
@@ -283,6 +321,8 @@ class Services:
             score=score_out(sm.score),
             leave=sm.leave,
             board_after=board.with_move(m).to_grid(),
+            mystery=mystery,
+            best=best if best is not None and best > sm.score.total else None,
         )
 
     # --- learning from confirmed pictures --------------------------------------------------

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from wwf.api import gameplay
 from wwf.api.app import run_blocking
@@ -28,7 +28,8 @@ from wwf.api.routes_web import (
 )
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK
 from wwf.api.services import ApiError, Services
-from wwf.vision.perspective import warp_board_png
+from wwf.core.rewards import REWARDS
+from wwf.vision.perspective import square_png, warp_board_png
 
 router = APIRouter(include_in_schema=False)
 RECENT_PICTURES = 4
@@ -55,6 +56,127 @@ def _selected(n: int, count: int) -> int:
     return min(max(n, 0), max(count - 1, 0))
 
 
+ACTIONS = ("find", "mine", "opponent")
+
+
+def _action_for(request: Request, game: Game) -> str:
+    """Which of the workspace's actions is showing: the one asked for with `?do=`, otherwise
+    the one the turn state points at. Only your own turn can find a best move."""
+    asked = request.query_params.get("do", "")
+    if asked == "find" and game.phase != "my_turn":
+        asked = ""
+    if asked in ACTIONS:
+        return asked
+    return "find" if game.phase == "my_turn" else "opponent"
+
+
+def _parse_word_form(
+    word: str, row: str, col: str, direction: str
+) -> tuple[tuple[int, int] | None, str | None]:
+    """The one-based start as numbers, or a sentence saying what is wrong with it."""
+    try:
+        r, c = int(row), int(col)
+        if direction not in ("across", "down") or not (
+            1 <= r <= BOARD_SIZE and 1 <= c <= BOARD_SIZE
+        ):
+            raise ValueError
+    except ValueError:
+        return None, f"Row and column must be numbers from 1 to {BOARD_SIZE}."
+    return (r, c), None
+
+
+def _preview_payload(
+    svc: Services, game: Game, word: str, start: tuple[int, int], direction: str
+) -> dict[str, Any]:
+    """A typed word as the composer shows it. Reads only: the game is not changed."""
+    label = svc.dictionaries.info(game.dictionary_id).label
+    try:
+        p = gameplay.preview_typed_move(svc, game, word, start[0], start[1], direction)
+    except MoveRejected as e:
+        problems = [gameplay.explain(x, label) for x in e.problems]
+        return {
+            "ok": False, "cells": [], "problems": problems, "legal": False, "forceable": False,
+            "points": None, "words": [], "bingo": 0, "tiles": 0, "start": [start[0], start[1]],
+        }  # fmt: skip
+    codes = p.entry_problems or p.violations
+    return {
+        "ok": p.legal or p.forceable,
+        "cells": p.cells,
+        "problems": [gameplay.explain(x, label) for x in codes],
+        "legal": p.legal,
+        "forceable": p.forceable,
+        "points": p.score.total if p.score else None,
+        "words": [{"word": w.word, "points": w.points} for w in p.score.words] if p.score else [],
+        "bingo": p.score.bingo_bonus if p.score else 0,
+        "tiles": p.new_tiles,
+        "start": [start[0], start[1]],
+    }
+
+
+SHOWN_AT_FIRST = 5
+
+
+def _to_check(game: Game, rec: Any) -> list[dict[str, Any]]:
+    """Squares of the latest reading the reader was unsure of, for the picture review."""
+    latest = game.latest_picture
+    if rec is None or latest is None or not latest.quad or rec.geometry is None:
+        return []
+    out = []
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            if not rec.needs_review[r][c]:
+                continue
+            v = game.board[r][c]
+            out.append({
+                "r": r, "c": c, "letter": (v or "").upper(), "blank": bool(v and v.islower()),
+                "locked": bool(game.base_board[r][c]),
+            })  # fmt: skip
+    return out
+
+
+def _turn_rows(game: Game) -> list[dict[str, Any]]:
+    """The confirmed turns, newest first, with the score after each and a number that counts
+    only moves and passes: the starting position and board updates are setup, not turns."""
+    totals = {"me": 0, "opponent": 0}
+    rows, played = [], 0
+    for t in game.turns:
+        setup = t.kind == "start"
+        if not setup:
+            totals[t.player] += t.points
+            played += 1
+        rows.append({
+            "t": t, "setup": setup, "number": None if setup else played,
+            "me": totals["me"], "opponent": totals["opponent"],
+        })  # fmt: skip
+    return list(reversed(rows))
+
+
+def _suggestions_view(game: Game, selected: int) -> list[dict[str, Any]]:
+    """The solver's moves as the page needs them: the tiles each one would put on the board, so
+    choosing one can draw it without another request."""
+    result = game.last_result
+    if result is None:
+        return []
+    out = []
+    for n, m in enumerate(result.moves):
+        dr, dc = (0, 1) if m.direction == "across" else (1, 0)
+        new = {(p.row, p.col) for p in m.placements}
+        cells = []
+        for i in range(len(m.word)):
+            r, c = m.start[0] + i * dr, m.start[1] + i * dc
+            v = m.board_after[r][c] or ""
+            cells.append({"r": r, "c": c, "letter": v.upper(), "blank": v.islower(),
+                          "new": (r, c) in new, "conflict": False})  # fmt: skip
+        out.append({
+            "n": n, "word": m.word, "score": m.score.total, "direction": m.direction,
+            "start": [m.start[0] + 1, m.start[1] + 1], "leave": m.leave,
+            "words": [{"word": w.word, "points": w.points} for w in m.score.words],
+            "bingo": m.score.bingo_bonus, "tiles": len(m.placements), "cells": cells,
+            "best": m.best, "mystery": bool(m.mystery),
+        })  # fmt: skip
+    return out
+
+
 def _solve_error(e: ApiError) -> str:
     if e.error == "solve_timeout":
         return "The solver took longer than 10 seconds. Try fewer blanks or another solver."
@@ -75,6 +197,16 @@ def _pending_view(svc: Services, game: Game, pending: Pending | None) -> dict[st
         "points": score.total if score else None,
         "words": [(w.word, w.points) for w in score.words] if score else [],
         "bingo": score.bingo_bonus if score else 0,
+        "reward_points": score.reward_points if score else 0,
+        "mystery": [
+            {
+                "r": r + 1,
+                "c": c + 1,
+                "name": f"reward-{r}-{c}",
+                "value": game.open_rewards.get(f"{r},{c}", ""),
+            }
+            for r, c in pending.mystery
+        ],
         "legal": a.legal,
         "forceable": a.forceable,
         "problems": [gameplay.explain(v, label) for v in a.violations],
@@ -102,11 +234,21 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
     ctx.setdefault("rack_review", unsure_rack + [False] * (MAX_RACK - len(unsure_rack)))
     ctx.setdefault("notice", game.notice)
     game.notice = None  # shown once
+    ctx.setdefault("flash", game.flash)
+    game.flash = None
     ctx.setdefault("board", game.board)
     ctx.setdefault("rack", rack)
     ctx.setdefault("errors", [])
     ctx.setdefault("form_values", {"word": "", "row": "", "col": "", "direction": "across"})
     ctx.setdefault("force_offer", False)
+    ctx.setdefault("composer_preview", None)
+    ctx.setdefault("do_action", _action_for(request, game))
+    suggestions = _suggestions_view(game, selected) if result else []
+    ctx.setdefault("suggestions", suggestions)
+    ctx.setdefault("show_all", request.query_params.get("all") == "1")
+    ctx.setdefault("first_n", SHOWN_AT_FIRST)
+    if ctx["do_action"] == "find" and suggestions and ctx["composer_preview"] is None:
+        ctx["composer_preview"] = {"cells": suggestions[selected]["cells"]}  # drawn on the board
     latest = game.latest_picture
     pictures = list(reversed(game.pictures[-RECENT_PICTURES:]))
     return _render(
@@ -114,6 +256,7 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         "game.html",
         status,
         game=game,
+        rewards=REWARDS,
         recognition=rec,
         needs_review=rec.needs_review if rec else [[False] * BOARD_SIZE] * BOARD_SIZE,
         pending=_pending_view(svc, game, pending),
@@ -132,9 +275,19 @@ def _page(request: Request, game: Game, status: int = 200, **ctx: Any) -> HTMLRe
         picture_count=len(game.pictures),
         has_quad=bool(latest and latest.quad),
         turns=list(reversed(game.turns)),
+        turn_rows=_turn_rows(game),
+        to_check=_to_check(game, rec),
+        suspect_letters=set(bag.over) if bag is not None and bag.over else set(),
         open_player=game.open_player or game.player_to_move,
         **ctx,
     )
+
+
+def _recorded(turn: Any) -> str:
+    who = "Your" if turn.player == "me" else "The opponent's"
+    if turn.kind == "pass":
+        return f"{who} pass was recorded."
+    return f"{who} move was recorded: {turn.word} for {turn.points} points."
 
 
 def _finish(request: Request, game: Game, labelled: bool = False) -> Response:
@@ -196,6 +349,12 @@ async def board_submit(request: Request, game_id: str) -> Response:
     if errors:
         return _page(request, game, 422, board=board, rack=rack_cells, errors=errors)
     gameplay.apply_edit(game, board, rack)
+    game.open_rewards = {
+        f"{r},{c}": str(v)
+        for r in range(BOARD_SIZE)
+        for c in range(BOARD_SIZE)
+        if (v := form.get(f"reward-{r}-{c}")) and str(v) in REWARDS
+    }
     label = svc.dictionaries.info(game.dictionary_id).label
     labelled = False
     try:
@@ -284,6 +443,27 @@ def play(request: Request, game_id: str, n: int) -> Response:
     return _finish(request, game)
 
 
+@router.post("/game/{game_id}/record/{n}")
+def record_suggestion(request: Request, game_id: str, n: int, turn: str = Form("")) -> Response:
+    """Record a suggestion as your move: put it on the board and confirm it, as one step."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    svc = get_services(request)
+    try:
+        done = gameplay.record_solver_move(
+            svc, game, n, expected_turn=int(turn) if turn.isdigit() else None
+        )
+        game.flash = _recorded(done)
+    except MoveRejected as e:
+        return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
+    except ApiError:
+        return _page(
+            request, game, 422, errors=["That move isn't available any more: find moves again."]
+        )
+    return _finish(request, game)
+
+
 @router.post("/game/{game_id}/word")
 def typed_word(
     request: Request,
@@ -320,13 +500,96 @@ def typed_word(
     return _finish(request, game)
 
 
+@router.get("/game/{game_id}/compose/preview.json")
+def compose_preview_json(
+    request: Request,
+    game_id: str,
+    word: str = "",
+    row: str = "",
+    col: str = "",
+    direction: str = "across",
+) -> Response:
+    """What a typed word would do, for the composer's live preview. Changes nothing."""
+    game = get_services(request).games.get(game_id)
+    if game is None:
+        return JSONResponse({"ok": False, "problems": ["That game doesn't exist."]}, 404)
+    start, problem = _parse_word_form(word, row, col, direction)
+    if not word.strip() or start is None:
+        problems = [problem] if problem and (row or col) else []
+        return JSONResponse({"ok": False, "incomplete": True, "cells": [], "problems": problems})
+    return JSONResponse(_preview_payload(get_services(request), game, word, start, direction))
+
+
+@router.post("/game/{game_id}/compose/preview")
+def compose_preview(
+    request: Request,
+    game_id: str,
+    word: str = Form(""),
+    row: str = Form(""),
+    col: str = Form(""),
+    direction: str = Form("across"),
+    player: str = Form("opponent"),
+) -> Response:
+    """The same preview without JavaScript: the page comes back with the word drawn on the
+    board. Still nothing is changed."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    values = {"word": word, "row": row, "col": col, "direction": direction}
+    do = "mine" if player == "me" else "opponent"
+    start, problem = _parse_word_form(word, row, col, direction)
+    if start is None or not word.strip():
+        errors = [problem or "Type the word first."]
+        return _page(request, game, 422, form_values=values, errors=errors, do_action=do)
+    payload = _preview_payload(get_services(request), game, word, start, direction)
+    return _page(request, game, form_values=values, composer_preview=payload, do_action=do)
+
+
+@router.post("/game/{game_id}/compose/record")
+def compose_record(
+    request: Request,
+    game_id: str,
+    word: str = Form(""),
+    row: str = Form(""),
+    col: str = Form(""),
+    direction: str = Form("across"),
+    player: str = Form("opponent"),
+    force: str = Form(""),
+    turn: str = Form(""),
+) -> Response:
+    """Place a typed word and confirm it as one move for the player shown. All or nothing."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    svc = get_services(request)
+    who = "me" if player == "me" else "opponent"
+    values = {"word": word, "row": row, "col": col, "direction": direction}
+    do = "mine" if who == "me" else "opponent"
+    start, problem = _parse_word_form(word, row, col, direction)
+    if start is None:
+        return _page(request, game, 422, form_values=values, errors=[problem or ""], do_action=do)
+    label = svc.dictionaries.info(game.dictionary_id).label
+    try:
+        done = gameplay.record_typed_move(
+            svc, game, who, word, start[0], start[1], direction,
+            force=bool(force), expected_turn=int(turn) if turn.isdigit() else None,
+        )  # fmt: skip
+        game.flash = _recorded(done)
+    except MoveRejected as e:
+        preview = _preview_payload(svc, game, word, start, direction)
+        errors = [gameplay.explain(p, label) for p in e.problems]
+        return _page(request, game, 422, form_values=values, composer_preview=preview,
+                     errors=errors, do_action=do)  # fmt: skip
+    return _finish(request, game)
+
+
 @router.post("/game/{game_id}/pass")
 def pass_turn(request: Request, game_id: str, who: str = Form("opponent")) -> Response:
     game = _game_or_page(request, game_id)
     if isinstance(game, HTMLResponse):
         return game
     try:
-        gameplay.pass_turn(game, "me" if who == "me" else "opponent")
+        game.flash = _recorded(gameplay.pass_turn(game, "me" if who == "me" else "opponent"))
     except MoveRejected as e:
         return _page(request, game, 422, errors=[gameplay.explain(p) for p in e.problems])
     return _finish(request, game)
@@ -339,9 +602,11 @@ def undo(request: Request, game_id: str) -> Response:
     if isinstance(game, HTMLResponse):
         return game
     try:
-        gameplay.undo(game)
+        undone = gameplay.undo(game)
     except ApiError:
         return _page(request, game, 422, errors=["Nothing to undo."])
+    what = "pass" if undone.kind == "pass" else undone.word or "board update"
+    game.flash = f"Turn {undone.n} ({what}) was reopened. Fix it, then confirm it again."
     return _finish(request, game)
 
 
@@ -380,6 +645,50 @@ def picture_file(request: Request, game_id: str, picture_id: str) -> Response:
     return Response(data, media_type=pic.content_type, headers={"Cache-Control": "private"})
 
 
+@router.get("/game/{game_id}/picture/{picture_id}/square/{row}/{col}.png", response_class=Response)
+def picture_square(request: Request, game_id: str, picture_id: str, row: int, col: int) -> Response:
+    """One square of the picture, enlarged, for comparing a doubtful letter by eye."""
+    svc = get_services(request)
+    game = svc.games.get(game_id)
+    found = svc.picture(game, picture_id) if game is not None else None
+    if found is None or not found[0].quad or not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
+        raise ApiError(404, "picture_not_found", {"picture": picture_id})
+    png = square_png(found[1], found[0].quad, row, col)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+@router.get("/game/{game_id}/picture/{picture_id}/view", response_class=HTMLResponse)
+def picture_view(request: Request, game_id: str, picture_id: str, back: str = "") -> Response:
+    """A picture inside the app: the original or the straightened board, zoomable, with a way
+    back to where you came from."""
+    svc = get_services(request)
+    game = svc.games.get(game_id)
+    found = svc.picture(game, picture_id) if game is not None else None
+    if game is None or found is None:
+        return _render(
+            request, "error.html", 404, title="Picture not found",
+            message="That picture doesn't exist (its game may have been deleted).",
+        )  # fmt: skip
+    pic = found[0]
+    ids = [p.id for p in game.pictures]
+    i = ids.index(pic.id)
+    anchor = back if back in ("pictures", "turns") else "pictures"
+    return _render(
+        request,
+        "picture.html",
+        game=game,
+        pic=pic,
+        straightened=bool(pic.quad),
+        back=f"/game/{game.id}#{anchor}",
+        back_name=anchor,
+        previous_id=ids[i - 1] if i > 0 else None,
+        next_id=ids[i + 1] if i + 1 < len(ids) else None,
+        number=i + 1,
+        total=len(ids),
+        turn_word=next((t.word for t in game.turns if t.picture == pic.id), ""),
+    )
+
+
 @router.get("/game/{game_id}/picture/{picture_id}/board.png", response_class=Response)
 def picture_board(request: Request, game_id: str, picture_id: str) -> Response:
     """The board in the picture, straightened with the corners the reader found."""
@@ -393,6 +702,21 @@ def picture_board(request: Request, game_id: str, picture_id: str) -> Response:
 
 
 # --- housekeeping ----------------------------------------------------------------------------
+
+
+@router.post("/game/{game_id}/mode")
+def set_mode(request: Request, game_id: str, mode: str = Form("normal")) -> Response:
+    """Choose the board a game that has not started yet is played on."""
+    game = _game_or_page(request, game_id)
+    if isinstance(game, HTMLResponse):
+        return game
+    try:
+        get_services(request).set_mode(game, mode)
+    except ApiError as e:
+        msg = "The mode can only change before the game starts."
+        return _page(request, game, e.status, errors=[msg])
+    _save(request, game)
+    return _redirect(f"/game/{game.id}")
 
 
 @router.post("/game/{game_id}/rename")

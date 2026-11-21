@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Picture {{ number }} · {{ game.name }} · WWF Solver{% endblock %}
+{% block body_class %}page-picture{% endblock %}
+{% block content %}
+<p class="back-link"><a href="{{ back }}">← Back to {{ game.name }}{% if back_name == "turns" %} (turns){% else %} (pictures){% endif %}</a></p>
+<h1>Picture {{ number }} of {{ total }}</h1>
+<p class="hint">
+  Taken during turn {{ pic.turn_n }} · {{ "uploaded" if pic.source == "upload" else "photo" }} ·
+  {{ pic.taken_at.replace("T", " ")[:16] }}
+  {% if turn_word %}· became <b>{{ turn_word }}</b>{% endif %}
+  {% if pic.label_board %}· <span class="ok">Confirmed; used to improve recognition</span>{% else %}· not used for learning{% endif %}
+</p>
+
+<section class="card viewer">
+  {# Radios, not script: Original and Straightened switch with CSS alone. #}
+  <fieldset class="viewer-choice">
+    <legend class="sr-only">Which image to show</legend>
+    <input type="radio" name="which" id="which-original" checked>
+    <label for="which-original">Original</label>
+    {% if straightened %}
+    <input type="radio" name="which" id="which-straight">
+    <label for="which-straight">Straightened board</label>
+    {% endif %}
+    <input type="checkbox" id="viewer-zoom" class="viewer-zoom-toggle">
+    <label for="viewer-zoom" class="button">Zoom</label>
+    <div class="viewer-frame">
+      <img class="shot original" src="/game/{{ game.id }}/picture/{{ pic.id }}" alt="The picture as it was taken">
+      {% if straightened %}
+      <img class="shot straight" src="/game/{{ game.id }}/picture/{{ pic.id }}/board.png"
+           alt="The board from the picture, straightened to a square">
+      {% endif %}
+    </div>
+  </fieldset>
+  {% if not straightened %}<p class="hint small">The board wasn't located in this picture, so there is no straightened version.</p>{% endif %}
+</section>
+
+<nav class="actions" aria-label="Pictures of this game">
+  {% if previous_id %}<a class="button" href="/game/{{ game.id }}/picture/{{ previous_id }}/view?back={{ back_name }}">← Previous picture</a>{% endif %}
+  {% if next_id %}<a class="button" href="/game/{{ game.id }}/picture/{{ next_id }}/view?back={{ back_name }}">Next picture →</a>{% endif %}
+  <a class="link" href="/game/{{ game.id }}/picture/{{ pic.id }}" target="_blank" rel="noopener">Open the original file in a new tab</a>
+</nav>
+{% endblock %}

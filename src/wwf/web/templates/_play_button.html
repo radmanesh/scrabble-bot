@@ -1,6 +1,7 @@
 {% if result and result.moves %}
 {% set m = result.moves[selected] %}
-<form action="/game/{{ game.id }}/play/{{ selected }}" method="post">
-  <button type="submit" class="primary big">Play {{ m.word }} · {{ m.score.total }} pts</button>
+<form action="/game/{{ game.id }}/record/{{ selected }}" method="post">
+  <input type="hidden" name="turn" value="{{ game.turn_number }}">
+  <button type="submit" class="primary big">Record {{ m.word }} · {{ m.score.total }} pts</button>
 </form>
 {% endif %}

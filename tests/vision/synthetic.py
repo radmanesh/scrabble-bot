@@ -10,14 +10,19 @@ from wwf.vision.synth import available_fonts, render_tile
 
 CELL = 40
 # BGR colours matching the measured hues of the current app's bonus squares
-BONUS_BGR = {"d": (220, 160, 60), "t": (70, 200, 150), "D": (80, 90, 230), "T": (60, 140, 240)}
+BONUS_BGR = {
+    "d": (220, 160, 60), "t": (70, 200, 150), "D": (80, 90, 230), "T": (60, 140, 240),
+    "Q": (143, 54, 176), "q": (134, 143, 31),
+}  # fmt: skip
+BONUS_LABEL = {"d": "DL", "t": "TL", "D": "DW", "T": "TW", "Q": "QW", "q": "QL"}
 CREAM = (225, 235, 242)
+OFFSET = {"*": (-60.0, 26.5, -10.0), "?": (-55.0, 35.0, -38.0)}  # the purple squares
 
 
-def _star_colour() -> tuple[int, int, int]:
-    """The purple centre square: cream moved by its measured offset in Lab."""
+def _offset_colour(offset: tuple[float, float, float]) -> tuple[int, int, int]:
+    """A square's colour: cream moved by its measured offset in Lab."""
     cream = cv2.cvtColor(np.uint8([[CREAM]]), cv2.COLOR_BGR2LAB).astype(np.float32)[0, 0]
-    purple = np.clip(cream + np.array([-60.0, 26.5, -10.0], np.float32), 0, 255).astype(np.uint8)
+    purple = np.clip(cream + np.array(offset, np.float32), 0, 255).astype(np.uint8)
     b, g, r = cv2.cvtColor(np.uint8([[purple]]), cv2.COLOR_LAB2BGR)[0, 0]
     return int(b), int(g), int(r)
 
@@ -35,12 +40,21 @@ def board_picture(cfg: BoardConfig, board: list[str]) -> np.ndarray:
                 img[y + 1 : y + CELL - 1, x + 1 : x + CELL - 1] = tile
                 continue
             cv2.rectangle(img, (x + 2, y + 2), (x + CELL - 3, y + CELL - 3), CREAM, -1)
-            colour = _star_colour() if cfg.layout[r][c] == "*" else BONUS_BGR.get(cfg.layout[r][c])
+            kind = cfg.layout[r][c]
+            colour = _offset_colour(OFFSET[kind]) if kind in OFFSET else BONUS_BGR.get(kind)
             if colour is not None:
                 m = CELL // 7
                 cv2.rectangle(img, (x + m, y + m), (x + CELL - m, y + CELL - m), colour, -1)
-                cv2.putText(img, "DL", (x + m + 2, y + CELL // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.3, (255, 255, 255), 1)  # fmt: skip
+                if cfg.layout[r][c] == "?":  # a big white question mark in a bright border
+                    cv2.rectangle(
+                        img, (x + m, y + m), (x + CELL - m, y + CELL - m), (60, 220, 255), 2
+                    )
+                    cv2.putText(img, "?", (x + CELL // 3, y + CELL - m - 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 3)  # fmt: skip
+                else:
+                    cv2.putText(img, BONUS_LABEL.get(cfg.layout[r][c], "DL"),
+                                (x + m + 2, y + CELL // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.3, (255, 255, 255), 1)  # fmt: skip
     return img
 
 

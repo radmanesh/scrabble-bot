@@ -1,0 +1,12 @@
+{# What to do next. Links, so it works without JavaScript; the page shows one workflow at a time. #}
+<nav class="action-bar" aria-label="What do you want to do?">
+  {% if game.phase == "my_turn" %}
+  <a class="button{% if do_action == 'find' %} primary{% endif %}" href="?do=find"
+     {% if do_action == 'find' %}aria-current="page"{% endif %}>Find my best move</a>
+  {% endif %}
+  <a class="button{% if do_action == 'mine' %} primary{% endif %}" href="?do=mine"
+     {% if do_action == 'mine' %}aria-current="page"{% endif %}>Record my move</a>
+  <a class="button{% if do_action == 'opponent' %} primary{% endif %}" href="?do=opponent"
+     {% if do_action == 'opponent' %}aria-current="page"{% endif %}>Record opponent's move</a>
+  <a class="button" href="#pictures">Update from photo</a>
+</nav>

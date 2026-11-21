@@ -15,6 +15,20 @@
     {% if pending.bingo %} + bingo {{ pending.bingo }}{% endif %}
   </p>
   {% endif %}
+  {% if pending.mystery %}
+  <fieldset class="rewards">
+    <legend>Mystery square{{ "s" if pending.mystery | length != 1 }}: which reward did you get?</legend>
+    {% for m in pending.mystery %}
+    <label>Row {{ m.r }}, column {{ m.c }}
+      <select name="{{ m.name }}" form="board-form">
+        <option value="">Not known yet (counts as a plain square)</option>
+        {% for code, label in rewards.items() %}<option value="{{ code }}"{% if m.value == code %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select></label>
+    {% endfor %}
+    <p class="hint small">Choose it, then press <b>Save</b> to see the score with it. The game shows
+      the reward after you play.{% if pending.reward_points %} Points Plus added {{ pending.reward_points }}.{% endif %}</p>
+  </fieldset>
+  {% endif %}
   {% if pending.problems %}
   <ul class="problems">{% for p in pending.problems %}<li>{{ p }}</li>{% endfor %}</ul>
   {% if not pending.forceable %}

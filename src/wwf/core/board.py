@@ -17,8 +17,11 @@ class Bonus(Enum):
     NONE = ""
     DL = "d"
     TL = "t"
+    QL = "q"  # super score only
     DW = "D"
     TW = "T"
+    QW = "Q"  # super score only
+    MYSTERY = "?"  # super score: a random reward the board cannot know; scores as a plain square
     CENTER = "*"
 
     @classmethod
@@ -27,11 +30,11 @@ class Bonus(Enum):
 
     @property
     def letter_multiplier(self) -> int:
-        return 2 if self is Bonus.DL else 3 if self is Bonus.TL else 1
+        return {Bonus.DL: 2, Bonus.TL: 3, Bonus.QL: 4}.get(self, 1)
 
     @property
     def word_multiplier(self) -> int:
-        return 2 if self is Bonus.DW else 3 if self is Bonus.TW else 1
+        return {Bonus.DW: 2, Bonus.TW: 3, Bonus.QW: 4}.get(self, 1)
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,13 @@ class Board:
                 if b is Bonus.CENTER:
                     return (r, c)
         return (self.size // 2, self.size // 2)
+
+    def with_bonuses(self, changes: dict[tuple[int, int], Bonus]) -> Board:
+        """The same board with some squares given another bonus (a revealed mystery square)."""
+        grid = [list(row) for row in self.bonuses]
+        for (r, c), bonus in changes.items():
+            grid[r][c] = bonus
+        return Board(self.size, self.cells, tuple(tuple(row) for row in grid))
 
     def with_tiles(self, placements: Iterable[tuple[int, int, Tile]]) -> Board:
         grid = [list(row) for row in self.cells]

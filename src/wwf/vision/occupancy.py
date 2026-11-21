@@ -35,7 +35,13 @@ BONUS_OFFSET = {
     "D": (-48.0, 24.0, 12.0),  # DW red
     "T": (-38.0, 19.0, 24.0),  # TW orange
     "*": (-60.0, 26.5, -10.0),  # the centre star, purple
+    # Super Score squares, measured on one screenshot (so only roughly): the reference is then
+    # refined from the squares of that kind in the picture itself
+    "Q": (-90.0, 55.0, -27.0),  # QW magenta
+    "q": (-65.0, -29.0, -5.0),  # QL teal
+    "?": (-55.0, 35.0, -38.0),  # mystery square, purple
 }
+MYSTERY_DE = 20.0  # an uncovered mystery square is this close to its reference colour
 L_WEIGHT = 0.5  # brightness varies with exposure, hue does not
 
 
@@ -149,7 +155,7 @@ def measure(board_bgr: np.ndarray, cfg: BoardConfig, inside: np.ndarray) -> Meas
             glyph_h[r, c], peak[r, c] = _glyph_stats(inner)
 
     plain = np.array([[ch == "." for ch in row] for row in cfg.layout]) & inside
-    bonus = np.array([[ch in "dtDT*" for ch in row] for row in cfg.layout])
+    bonus = np.array([[ch in "dtDTQq?*" for ch in row] for row in cfg.layout])
     # The empty-cream colour comes from plain squares that show no letter-like stroke.
     blank = (strokes < 0.07) & (glyph_h < 0.4)
     cream = None
@@ -168,6 +174,11 @@ def measure(board_bgr: np.ndarray, cfg: BoardConfig, inside: np.ndarray) -> Meas
         ref = _nearest_cluster(colour[kmask & inside], expected, weights) if kind != "*" else None
         ref = expected if ref is None else ref
         de_ref[kmask] = np.linalg.norm((colour[kmask] - ref) * weights, axis=1)
+    # A mystery square's big white "?" and bright border look like a letter to the stroke
+    # measures. Where the square still has its own colour nothing covers it, so measure it as the
+    # empty bonus square it is. A tile on top has the tile's colour, far from this reference.
+    mystery = np.array([[ch == "?" for ch in row] for row in cfg.layout]) & (de_ref < MYSTERY_DE)
+    strokes[mystery] = glyph_h[mystery] = peak[mystery] = ink[mystery] = 0.0
     return Measures(de_ref, de_cream, strokes, glyph_h, peak, ink, bonus, inside)
 
 

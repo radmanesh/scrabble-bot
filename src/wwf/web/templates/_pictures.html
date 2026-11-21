@@ -23,14 +23,23 @@
   {% with stay=False %}{% include "_viewfinder.html" %}{% endwith %}
   <p class="progress" id="send-progress" role="status" hidden>Reading the board…</p>
 </div>
+<div class="import-preview card" id="import-preview" hidden role="group" aria-labelledby="import-title">
+  <h3 id="import-title">Check the picture</h3>
+  <img alt="The picture you chose, before it is read">
+  <p class="hint small">Confirmed tiles are kept as they are. New tiles and your rack are read into this turn for you to check before you confirm it. If the picture can't be used, nothing changes.</p>
+  <div class="actions">
+    <button type="button" class="primary" data-go>Read the board</button>
+    <button type="button" data-cancel>Choose another</button>
+  </div>
+</div>
 <div class="notice error" id="send-error" role="alert" hidden></div>
 {% if pictures %}
 <div class="pic-strip">
   {% for p in pictures %}
-  <a class="pic" href="/game/{{ game.id }}/picture/{{ p.id }}" target="_blank" rel="noopener">
-    <img src="/game/{{ game.id }}/picture/{{ p.id }}" alt="Picture {{ p.id }}" loading="lazy">
+  <a class="pic" href="/game/{{ game.id }}/picture/{{ p.id }}/view?back=pictures">
+    <img src="/game/{{ game.id }}/picture/{{ p.id }}" alt="Picture from turn {{ p.turn_n }}, open it in the viewer" loading="lazy">
     <span class="small">Turn {{ p.turn_n }} · {{ "uploaded" if p.source == "upload" else "photo" }}
-      {% if p.label_board %}· <span class="ok">learned</span>{% endif %}</span>
+      {% if p.label_board %}· <span class="ok">Confirmed; used to improve recognition</span>{% endif %}</span>
   </a>
   {% endfor %}
 </div>

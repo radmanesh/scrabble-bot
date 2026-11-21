@@ -220,3 +220,48 @@ def test_a_picture_of_another_game_is_refused(current: BoardConfig) -> None:
     previous = [[None if ch == "." else ch.upper() for ch in row] for row in a.board]
     r = read_image(b.image, model, current, previous=previous)
     assert r is not None and r.rejected and "picture_does_not_match" in r.warnings
+
+
+# --- game modes ----------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def configs() -> dict[str, BoardConfig]:
+    return {mode: load_board_config(mode=mode) for mode in ("normal", "super_score")}
+
+
+@pytest.mark.parametrize("mode", ["normal", "super_score"])
+def test_the_picture_says_which_mode_it_is(configs: dict[str, BoardConfig], mode: str) -> None:
+    from wwf.vision.pipeline import detect_mode
+
+    img = photo(configs[mode], SAMPLE_BOARD, QUAD)
+    found, fits = detect_mode(img, configs)
+    assert found == mode
+    assert fits and fits[0].matches >= 15  # tiles cover some squares
+
+
+def test_recognize_reports_the_mode(
+    configs: dict[str, BoardConfig], synthetic_model: ReaderModel
+) -> None:
+    import cv2
+
+    from wwf.vision.pipeline import recognize
+
+    img = photo(configs["super_score"], SAMPLE_BOARD, QUAD)
+    data = cv2.imencode(".png", img)[1].tobytes()
+    assert recognize(data, synthetic_model, configs).mode == "super_score"
+    assert recognize(data, synthetic_model, configs, mode="normal").mode == "normal"  # as told
+
+
+def test_mystery_squares_are_not_tiles(configs: dict[str, BoardConfig]) -> None:
+    """The big white "?" on a mystery square must not read as a letter."""
+    cfg = configs["super_score"]
+    img = photo(cfg, SAMPLE_BOARD, QUAD)
+    fit = find_board(img, cfg)
+    assert fit is not None
+    m = measure(board_image(img, fit), cfg, visible_mask(img.shape, fit.homography))
+    p = OccupancyModel.default().probability(m)
+    for r in range(15):
+        for c in range(15):
+            if cfg.layout[r][c] == "?" and SAMPLE_BOARD[r][c] == ".":
+                assert p[r, c] < 0.5, (r, c, p[r, c])

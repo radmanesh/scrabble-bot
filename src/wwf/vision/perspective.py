@@ -32,3 +32,21 @@ def warp_board_png(image_bytes: bytes, quad: Quad, size: int = 900) -> bytes:
     if not ok:
         raise ValueError("could not encode image")
     return buf.tobytes()
+
+
+def square_png(
+    image_bytes: bytes, quad: Quad, row: int, col: int, margin: float = 0.45, scale: int = 5
+) -> bytes:
+    """One board square (zero-based row and column) from the straightened board, with a margin
+    of its neighbours, enlarged so a doubtful letter can be compared by eye."""
+    board = warp_board(image_bytes, quad, 15 * 60)
+    px = 60
+    pad = int(margin * px)
+    padded = cv2.copyMakeBorder(board, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
+    y0, x0 = row * px, col * px
+    crop = padded[y0 : y0 + px + 2 * pad, x0 : x0 + px + 2 * pad]
+    big = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    ok, buf = cv2.imencode(".png", big)
+    if not ok:
+        raise ValueError("could not encode image")
+    return buf.tobytes()

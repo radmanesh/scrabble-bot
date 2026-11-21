@@ -20,14 +20,39 @@ from wwf.api.app import services as get_services
 from wwf.api.games import Game
 from wwf.api.schemas import BOARD_SIZE, MAX_RACK, BoardGrid, check_rack
 from wwf.api.services import ApiError, Services
+from wwf.core.config import MODE_LABELS
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
 templates.env.filters["truthy"] = lambda v: v is True or str(v).lower() in ("true", "1", "on")
 
 OPTIONS_COOKIE = "wwf_options"
-BONUS_LABELS = {"T": "TW", "D": "DW", "t": "TL", "d": "DL", "*": "★", ".": ""}
-BONUS_CLASSES = {"T": "tw", "D": "dw", "t": "tl", "d": "dl", "*": "ctr", ".": ""}
+# Everyday wording for the solver's settings. The option names and values the server stores and
+# the solvers read are unchanged: only what the page says about them.
+PARAM_LABELS = {
+    "max_results": "Maximum suggestions",
+    "min_score": "Minimum score",
+    "allow_blank_branching": "Include blank tiles",
+    "tie_break": "Tie preference",
+}
+PARAM_HELP = {
+    "max_results": "How many of the best moves to list.",
+    "min_score": "Leave out moves that score less than this.",
+    "allow_blank_branching": "Try every letter for a blank on your rack. Turning this off is "
+    "faster but ignores your blanks.",
+    "tie_break": "What to prefer among moves with the same score.",
+}
+CHOICE_LABELS = {
+    "score_then_leave": "Higher score, then the better tiles kept",
+    "score_only": "Higher score only",
+}
+BONUS_LABELS = {
+    "T": "TW", "D": "DW", "t": "TL", "d": "DL", "Q": "QW", "q": "QL", "?": "?", "*": "★", ".": ""
+}  # fmt: skip
+BONUS_CLASSES = {
+    "T": "tw", "D": "dw", "t": "tl", "d": "dl", "Q": "qw", "q": "ql", "?": "mys", "*": "ctr",
+    ".": "",
+}  # fmt: skip
 
 
 # --- helpers ---------------------------------------------------------------------------------
@@ -35,9 +60,11 @@ BONUS_CLASSES = {"T": "tw", "D": "dw", "t": "tl", "d": "dl", "*": "ctr", ".": ""
 
 def _render(request: Request, name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
     svc = get_services(request)
-    layout = svc.cfg.layout
+    game = ctx.get("game")
+    layout = svc.config_for(game.mode if isinstance(game, Game) else "normal").layout
     ctx.setdefault("bonus", [[BONUS_CLASSES[ch] for ch in row] for row in layout])
     ctx.setdefault("bonus_label", [[BONUS_LABELS[ch] for ch in row] for row in layout])
+    ctx.setdefault("mode_labels", MODE_LABELS)
     ctx.setdefault("size", BOARD_SIZE)
     return templates.TemplateResponse(request, name, ctx, status_code=status)
 
@@ -103,22 +130,65 @@ def home(request: Request) -> HTMLResponse:
         request,
         "upload.html",
         model_loaded=svc.recognizer is not None,
-        games=[_game_summary(g) for g in svc.games.saved()],
+        games=[_game_summary(svc, g) for g in svc.games.saved()],
     )
 
 
-def _game_summary(g: Game) -> dict[str, Any]:
+def _preview_rows(g: Game) -> tuple[list[str], list[str], int, int]:
+    """The saved board for a thumbnail, as two lists of 15 strings.
+
+    `letters` holds what is on each square ("." empty; lowercase is a blank tile) and `state`
+    says which tiles are confirmed ("c") and which belong to the open turn and aren't confirmed
+    yet ("d"). It is the board, not the latest picture, and never a suggestion: a suggestion is
+    only drawn when you choose it on the game page."""
+    letters, state, confirmed, draft = [], [], 0, 0
+    for r in range(BOARD_SIZE):
+        row, marks = [], []
+        for c in range(BOARD_SIZE):
+            v = g.board[r][c]
+            if v is None:
+                row.append(".")
+                marks.append(".")
+            elif g.base_board[r][c] is not None:
+                row.append(v)
+                marks.append("c")
+                confirmed += 1
+            else:
+                row.append(v)
+                marks.append("d")
+                draft += 1
+        letters.append("".join(row))
+        state.append("".join(marks))
+    return letters, state, confirmed, draft
+
+
+def _game_summary(svc: Services, g: Game) -> dict[str, Any]:
     scores = g.scores()
+    letters, state, confirmed, draft = _preview_rows(g)
+    if not g.started:
+        status = "Setting up"
+    else:
+        status = "Your turn" if g.phase == "my_turn" else "Opponent's turn"
+    tiles = f"{confirmed} confirmed tile{'s' if confirmed != 1 else ''}"
+    if draft:
+        tiles += f", {draft} not confirmed yet"
     return {
         "id": g.id,
         "name": g.name,
         "started": g.started,
         "phase": g.phase,
+        "status": status,
         "me": scores["me"],
         "opponent": scores["opponent"],
         "turns": sum(1 for t in g.turns if t.kind != "start"),
         "pictures": len(g.pictures),
         "updated": g.updated_at.replace("T", " ")[:16],
+        "mode": g.mode,
+        "mode_label": MODE_LABELS.get(g.mode, g.mode),
+        "bonus": [[BONUS_CLASSES[ch] for ch in row] for row in svc.config_for(g.mode).layout],
+        "preview": state,
+        "letters": letters,
+        "summary": f"Board with {tiles}." if confirmed + draft else "Empty board.",
     }
 
 
@@ -134,7 +204,7 @@ async def upload(
     except ApiError as e:
         return _render(request, "upload.html", e.status, error=upload_error(e),
                        model_loaded=svc.recognizer is not None,
-                       games=[_game_summary(g) for g in svc.games.saved()])  # fmt: skip
+                       games=[_game_summary(svc, g) for g in svc.games.saved()])  # fmt: skip
     game = _new_game(request)
     await run_blocking(
         request, svc.attach_picture, game, data, content_type, picture_source(source, content_type)
@@ -200,6 +270,9 @@ def _options_context(svc: Services, saved: dict[str, Any], game: Game | None) ->
         "chosen": chosen,
         "dictionaries": svc.dictionaries_response().dictionaries,
         "dictionary_id": dictionary,
+        "param_labels": PARAM_LABELS,
+        "param_help": PARAM_HELP,
+        "choice_labels": CHOICE_LABELS,
     }
 
 
@@ -218,7 +291,7 @@ def options_page(request: Request, game: str | None = None, saved: int = 0) -> H
 @router.post("/options")
 async def options_submit(
     request: Request, solver_id: str = Form(...), dictionary_id: str = Form(""),
-    game_id: str = Form(""),
+    game_id: str = Form(""), then: str = Form(""),
 ) -> Response:  # fmt: skip
     svc = get_services(request)
     form = await request.form()
@@ -245,7 +318,12 @@ async def options_submit(
         svc.set_options(g, sid, full, did)
         svc.games.save(g)
     cookie = {"solver_id": sid, "params": all_params, "dictionary_id": did}
-    target = f"/options?saved=1&game={g.id}" if g is not None else "/options?saved=1"
+    if g is not None and then == "game":
+        g.flash = "Settings saved. Suggestions will use them the next time you find a move."
+        svc.games.save(g)
+        target = f"/game/{g.id}"
+    else:
+        target = f"/options?saved=1&game={g.id}" if g is not None else "/options?saved=1"
     response = _redirect(target)
     response.set_cookie(
         OPTIONS_COOKIE,

@@ -26,6 +26,7 @@ class ScoreBreakdown:
     words: tuple[WordScore, ...]
     bingo_bonus: int
     total: int
+    reward_points: int = 0  # Points Plus from a mystery square, already in `total`
 
 
 @dataclass(frozen=True)

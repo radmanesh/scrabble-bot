@@ -1,6 +1,7 @@
 <section class="card game-header">
+  <p class="back-link"><a href="/">← Back to games</a></p>
   <div class="game-title">
-    <h1>{{ game.name }}</h1>
+    <h1>{{ game.name }}{% if game.mode != "normal" %} <span class="mode-badge">{{ mode_labels[game.mode] }}</span>{% endif %}</h1>
     <details class="rename">
       <summary class="small">Rename</summary>
       <form action="/game/{{ game.id }}/rename" method="post" class="inline-form">

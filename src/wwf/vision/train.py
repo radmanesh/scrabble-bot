@@ -59,6 +59,7 @@ class Example:
     board: list[str]
     rack: str | None  # None when the picture's own rack was never checked
     quad: list[list[float]] | None
+    mode: str = "normal"  # the game mode whose board the picture shows
 
     @property
     def position(self) -> tuple[str, ...]:
@@ -137,6 +138,7 @@ def load_game_examples(games_dir: Path) -> list[Example]:
                     list(board),
                     pic.get("label_rack"),
                     quad if isinstance(quad, list) else None,
+                    str(game.get("mode", "normal")),
                 )
             )
     return out
@@ -166,6 +168,11 @@ def _jitter(crop: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return out
 
 
+def _cfg_for(ex: Example, cfg: BoardConfig) -> BoardConfig:
+    """The board config of the example's game mode (`cfg` itself when it is already that one)."""
+    return cfg if ex.mode == cfg.mode else load_board_config(mode=ex.mode)
+
+
 def _picture_fit(ex: Example, cfg: BoardConfig) -> BoardFit | None:
     fits = find_boards(ex.image, cfg)
     if fits:
@@ -174,6 +181,7 @@ def _picture_fit(ex: Example, cfg: BoardConfig) -> BoardFit | None:
 
 
 def _measured(ex: Example, cfg: BoardConfig) -> tuple[BoardFit, np.ndarray, Measures] | None:
+    cfg = _cfg_for(ex, cfg)
     fit = _picture_fit(ex, cfg)
     if fit is None:
         return None
@@ -366,7 +374,7 @@ def evaluate(examples: list[Example], cfg: BoardConfig, synthetic: bool = True) 
         model = build_model(train, cfg, synthetic=synthetic)
         for ex in tests:
             t = time.perf_counter()
-            result = read_image(ex.image, model, cfg)
+            result = read_image(ex.image, model, _cfg_for(ex, cfg))
             ms = (time.perf_counter() - t) * 1000
             if result is None:
                 print(f"{ex.name:30} | board not found")
@@ -391,7 +399,7 @@ def evaluate(examples: list[Example], cfg: BoardConfig, synthetic: bool = True) 
                     ]
                     for r in range(15)
                 ]
-                nr = read_image(ex.image, model, cfg, previous=previous)
+                nr = read_image(ex.image, model, _cfg_for(ex, cfg), previous=previous)
                 if nr is not None:
                     e2, i2, m2, _ = _score(ex, nr.board, ignore[ex.name])
                     totals["next_turns"] += 1

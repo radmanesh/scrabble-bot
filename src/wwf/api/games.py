@@ -70,6 +70,7 @@ class Turn:
     tiles: int = 0  # the starting position: how many tiles it had
     source: str = "typed"  # suggestion | typed | picture | grid | start
     forced: bool = False  # kept although a word is not in the word list
+    rewards: dict[str, str] = field(default_factory=dict)  # mystery squares ("r,c") -> reward
     picture: str | None = None  # the picture this turn was read from, if any
     at: str = field(default_factory=now_iso)
     # what the game looked like before it, so undo can reopen it
@@ -104,6 +105,7 @@ class Game:
     params: dict[str, Any]
     dictionary_id: str
     name: str = ""
+    mode: str = "normal"  # which board it is played on: normal | super_score
     phase: Phase = "my_turn"  # whose move is next
     started: bool = False  # has the starting position been confirmed?
     board: BoardGrid = field(default_factory=empty_grid)
@@ -114,11 +116,13 @@ class Game:
     pictures: list[Picture] = field(default_factory=list)
     open_source: str = ""  # how the open turn's tiles got there; "" when nothing is open
     open_player: Player | None = None  # who the open move is for, if not the player to move
+    open_rewards: dict[str, str] = field(default_factory=dict)  # rewards chosen for the open turn
     recognition: RecognitionResultOut | None = None  # the latest reading, for amber flags
     last_result: SolveResponse | None = None  # the latest solve, until the board changes
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
     notice: dict[str, Any] | None = field(default=None, repr=False)  # shown once
+    flash: str | None = field(default=None, repr=False)  # what the last action did, shown once
 
     # --- derived ----------------------------------------------------------------------------
 
@@ -164,13 +168,20 @@ class GameStore:
     # --- access -----------------------------------------------------------------------------
 
     def create(
-        self, solver_id: str, params: dict[str, Any], dictionary_id: str, *, name: str = ""
+        self,
+        solver_id: str,
+        params: dict[str, Any],
+        dictionary_id: str,
+        *,
+        name: str = "",
+        mode: str = "normal",
     ) -> Game:
         g = Game(
             id=uuid.uuid4().hex,
             solver_id=solver_id,
             params=dict(params),
             dictionary_id=dictionary_id,
+            mode=mode,
             name=name or f"Game {datetime.now():%b %d, %H:%M}",
         )
         with self._lock:
@@ -302,12 +313,14 @@ def game_to_dict(g: Game) -> dict[str, Any]:
         "solver_id": g.solver_id,
         "params": g.params,
         "dictionary_id": g.dictionary_id,
+        "mode": g.mode,
         "board": grid_to_rows(g.board),
         "base_board": grid_to_rows(g.base_board),
         "rack": g.rack,
         "base_rack": g.base_rack,
         "open_source": g.open_source,
         "open_player": g.open_player,
+        "open_rewards": g.open_rewards,
         "turns": [asdict(t) for t in g.turns],
         "pictures": [asdict(p) for p in g.pictures],
         "recognition": g.recognition.model_dump(mode="json") if g.recognition else None,
@@ -335,6 +348,7 @@ def game_from_dict(d: dict[str, Any]) -> Game:
         params=d.get("params", {}),
         dictionary_id=d["dictionary_id"],
         name=d.get("name", ""),
+        mode=d.get("mode", "normal"),
         phase=d.get("phase", "my_turn"),
         started=bool(d.get("started", bool(turns))),
         board=rows_to_grid(d["board"]),
@@ -345,6 +359,7 @@ def game_from_dict(d: dict[str, Any]) -> Game:
         pictures=pictures,
         open_source=d.get("open_source", ""),
         open_player=d.get("open_player"),
+        open_rewards=d.get("open_rewards", {}),
         created_at=d.get("created_at", now_iso()),
         updated_at=d.get("updated_at", now_iso()),
     )

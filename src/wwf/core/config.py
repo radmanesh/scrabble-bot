@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-VALID_BONUS_CHARS = frozenset(".TDtd*")
+VALID_BONUS_CHARS = frozenset(".TDtdQq?*")
+
+# Game modes and the board config each one plays on. The first is the default.
+MODES: dict[str, str] = {"normal": "wwf_current.json", "super_score": "wwf_super_score.json"}
+MODE_LABELS: dict[str, str] = {"normal": "Normal", "super_score": "Super Score"}
 
 
 class ConfigError(ValueError):
@@ -49,6 +53,7 @@ class BoardConfig:
     bag: dict[str, int]
     bingo_bonus: int
     bingo_tiles: int
+    mode: str = "normal"
 
     def value(self, letter: str, is_blank: bool = False) -> int:
         return 0 if is_blank else self.letter_values[letter]
@@ -87,14 +92,20 @@ def board_config_from_dict(data: dict[str, Any]) -> BoardConfig:
         bag={str(k): int(v) for k, v in data["bag"].items()},
         bingo_bonus=int(data["bingo_bonus"]),
         bingo_tiles=int(data["bingo_tiles"]),
+        mode=str(data.get("mode", "normal")),
     )
 
 
 DEFAULT_BOARD_CONFIG = "wwf_current.json"
 
 
-def load_board_config(path: Path | None = None) -> BoardConfig:
-    """The given board config, else config/$WWF_BOARD_CONFIG, else config/wwf_current.json."""
+def load_board_config(path: Path | None = None, mode: str | None = None) -> BoardConfig:
+    """The given board config, else the one for `mode`, else config/$WWF_BOARD_CONFIG, else
+    config/wwf_current.json."""
+    if path is None and mode is not None and mode != "normal":
+        if mode not in MODES:
+            raise ConfigError(f"unknown game mode {mode!r}")
+        path = config_dir() / MODES[mode]
     path = path or config_dir() / os.environ.get("WWF_BOARD_CONFIG", DEFAULT_BOARD_CONFIG)
     with path.open() as f:
         return board_config_from_dict(json.load(f))

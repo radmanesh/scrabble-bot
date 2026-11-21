@@ -5,6 +5,11 @@
 <div class="game" data-game="{{ game.id }}">
   {% include "_game_header.html" %}
 
+  {# What the last action did, shown once; a status region so it is announced too. #}
+  <div class="flash-region" role="status" aria-live="polite">
+    {% if flash %}<p class="notice ok">{{ flash }}</p>{% endif %}
+  </div>
+
   {% if drew is not none %}
   <section class="card draw-prompt">
     <form action="/game/{{ game.id }}/draw" method="post">
@@ -30,24 +35,24 @@
     {% include "_pending_card.html" %}
   {% endif %}
 
-  {% include "_board_form.html" %}
-
-  {% if game.started and not open_tiles %}
-    {% if game.phase == "my_turn" %}{% include "_moves.html" %}{% endif %}
-    {% include "_enter_move.html" %}
-  {% endif %}
-
-  <section class="card pictures-card">
-    {% include "_pictures.html" %}
-  </section>
-
-  {% include "_history.html" %}
-
-  {% if game.started and not open_tiles and game.phase == "my_turn" %}
-  <div id="thumb-bar" class="thumb-bar">
-    {% if result and result.moves %}{% include "_play_button.html" %}
-    {% else %}<button type="submit" form="board-form" name="action" value="solve" class="primary big">Solve</button>{% endif %}
+  {% set has_panel = game.started and not open_tiles %}
+  <div class="workspace{% if has_panel %} has-panel{% endif %}">
+    {% if has_panel %}<div class="ws-bar">{% include "_action_bar.html" %}</div>{% endif %}
+    <div class="ws-board">{% include "_board_form.html" %}</div>
+    {% if has_panel %}
+    <div class="ws-panel">
+      {% if do_action == "find" %}{% include "_moves.html" %}
+      {% else %}{% include "_composer.html" %}{% endif %}
+    </div>
+    {% endif %}
+    <div class="ws-after">
+      <section class="card pictures-card" id="pictures">
+        <h2 class="sr-only">Pictures</h2>
+        {% include "_pictures.html" %}
+      </section>
+      {% include "_history.html" %}
+    </div>
   </div>
-  {% endif %}
+
 </div>
 {% endblock %}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from tests.api.helpers import FakeReader
 from wwf.api.app import create_app
 from wwf.api.games import Game
 from wwf.api.services import Services, Settings
+from wwf.core.config import cache_dir, config_dir, dictionaries_dir
+from wwf.core.dictionary import load_dictionary_registry
 
 
 @pytest.fixture
@@ -25,8 +28,13 @@ def reader() -> FakeReader:
 
 
 @pytest.fixture
-def client(games_dir: Path, reader: FakeReader) -> Iterator[TestClient]:
-    with TestClient(create_app(Settings(games_dir=games_dir), recognizer=reader)) as c:
+def client(games_dir: Path, reader: FakeReader, tmp_path: Path) -> Iterator[TestClient]:
+    # Word lists are copied so that words learned during a test never reach the real files.
+    lists = tmp_path / "dictionaries"
+    shutil.copytree(dictionaries_dir(), lists)
+    registry = load_dictionary_registry(config_dir() / "dictionaries.json", lists, cache_dir())
+    app = create_app(Settings(games_dir=games_dir), recognizer=reader, dictionaries=registry)
+    with TestClient(app) as c:
         yield c
 
 
